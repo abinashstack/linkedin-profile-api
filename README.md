@@ -10,11 +10,23 @@ A small HTTPS API that takes a public LinkedIn profile URL and returns
 structured JSON: name, headline, location, about, experience, education,
 skills, certifications, languages, and profile images.
 
-It works by calling **LinkedIn's own internal "Voyager" JSON API directly**
-over HTTPS — the same endpoint linkedin.com's web front-end calls when you
-open a profile page. There is no browser automation anywhere in this
-service (no Selenium/Playwright/Puppeteer, no HTML rendering); it's plain
-HTTP requests with `httpx`, in and out.
+It works by calling **the same internal endpoints linkedin.com's own web
+front-end calls** when you open a profile page — directly, over HTTPS, with
+plain `httpx` requests. There is no browser automation anywhere in this
+service (no Selenium/Playwright/Puppeteer, no HTML rendering engine).
+
+**This is on its second architecture**, and that's worth reading before the
+rest of this doc. The original version hit LinkedIn's classic Voyager REST
+endpoint (`/voyager/api/identity/profiles/<id>/profileView`); partway
+through building this, that endpoint started returning `410 Gone` against a
+real account, and tracing it live (via a browser's DevTools Network tab)
+showed LinkedIn has migrated profile rendering entirely to a React Server
+Components ("Flight" protocol) system — real content now comes back as a
+serialized UI-component tree, not a JSON data object. Section 3 below
+covers what that means for how this parses data, and it's the reason this
+project reads less like "call an API, get clean JSON" and more like
+"replay a specific request, then recover text from a rendered tree." That
+shift is real and is the main thing to understand about this codebase.
 
 ## ⚠️ Before you use this
 
@@ -30,34 +42,62 @@ take-home assignment as a demonstration of API reverse-engineering.
 
 ## How it works
 
-1. **Auth.** LinkedIn's web app authenticates its Voyager API calls with an
+1. **Auth.** LinkedIn's web app authenticates every internal request with an
    `li_at` session cookie plus a matching `JSESSIONID`/`csrf-token` pair.
    This service obtains that cookie one of two ways (see [Getting a
    LinkedIn session](#getting-a-linkedin-session) below), then reuses it
    for every request.
 2. **Resolve the URL.** `https://www.linkedin.com/in/<public-id>/` is
    parsed to pull out `<public-id>`, LinkedIn's vanity identifier for the
-   profile.
-3. **Fetch.** `GET /voyager/api/identity/profiles/<public-id>/profileView`
-   is called with the session cookies and the headers Voyager expects
-   (`csrf-token`, `x-restli-protocol-version: 2.0.0`, etc.). This single
-   endpoint returns most of a profile's sections in one response.
-4. **Parse.** Voyager returns a *normalized* document: a flat `included`
-   array of typed entities (each tagged with a `$type`, e.g.
-   `com.linkedin.voyager.identity.profile.Position`), rather than one
-   nested object. The parser (`app/parser.py`) scans that array by
-   `$type` suffix and maps each entity type onto our response schema —
-   see [Known limitations](#known-limitations) for the tradeoff this makes.
-5. **Respond.** The parsed profile is returned as JSON and cached in memory
-   for `CACHE_TTL_SECONDS` (default 1 hour) so repeat lookups of the same
-   profile don't hit LinkedIn again immediately.
+   profile — this is also literally the value LinkedIn's own request body
+   sends as `vanityName` (see step 4), so no extra ID-resolution call is
+   needed.
+3. **Fetch the basics from the page's own HTML.** `GET /in/<public-id>/` is
+   requested like a browser would, and `name`/`headline`/`location`/
+   `profile_picture` are read from that page's standard `<title>` and Open
+   Graph meta tags (`og:title`, `og:description`, `og:image`) — the same
+   tags any page exposes for link-preview cards on other sites. This is a
+   deliberately different, more boring target than the SDUI system in step
+   4: meta tags are conventional HTML, essentially the most stable part of
+   any page, and sidestep the whole component-tree problem for exactly the
+   fields simple enough not to need it.
+4. **Fetch the deep sections via LinkedIn's UI-rendering endpoint.** About,
+   Experience, and Education each come from a separate
+   `POST /flagship-web/rsc-action/actions/component` call (`componentId` =
+   `...aboutTopLevelSection` / `...experienceTopLevelSection` /
+   `...educationTopLevelSection`, body `{"clientArguments": {"payload":
+   {"vanityName": "<public-id>", "isSelfView": false}, ...}}`). This is
+   the endpoint LinkedIn's own frontend calls to render those cards — found
+   by watching real Network traffic in DevTools, not by guessing. Its
+   response is a React Server Components ("Flight" protocol) stream: lines
+   of `<chunk-id>:<payload>`, mostly JSON tuples shaped like
+   `["$", elementType, key, props]` — literally a serialized UI tree, with
+   real content (job titles, company names, dates) sitting inside it as
+   plain rendered text, not as named fields like `companyName` or
+   `startDate`. `app/sdui_parser.py` recovers that text by recognizing a
+   few recurring component "shapes" (a `<p>` with one className is always a
+   title, another className is always a subtitle, one generic text
+   component holds short strings like dates, another holds expandable
+   descriptions) rather than by resolving the tree the way React itself
+   would. See its module docstring and [Known limitations](#known-limitations)
+   for exactly what that tradeoff costs.
+5. **Combine and respond.** `app/parser.py` merges the meta-tag basics and
+   the three parsed cards into one `ProfileResponse`, cached in memory for
+   `CACHE_TTL_SECONDS` (default 1 hour) so repeat lookups of the same
+   profile don't hit LinkedIn again immediately. One profile lookup is four
+   requests to LinkedIn (HTML page + 3 component calls), not one — worth
+   knowing when thinking about rate limits or batch sizing.
 
-This general approach (raw HTTP calls to `/voyager/api/identity/profiles/...`,
-authenticated with an `li_at` cookie) is well documented in the LinkedIn
-reverse-engineering community — for example the open-source
-[`linkedin-api`](https://github.com/tomquirk/linkedin-api) Python library
-takes the same approach. The code here is an independent implementation,
-scoped to what this assignment asks for.
+The general shape of steps 1-2 (raw HTTP calls, `li_at` cookie auth) is
+well documented in the LinkedIn reverse-engineering community — the
+open-source [`linkedin-api`](https://github.com/tomquirk/linkedin-api)
+Python library (now private; see below) used to be the standard reference
+for it, and a community fork,
+[`open-linkedin-api`](https://github.com/EseToni/open-linkedin-api), still
+documents the classic REST flow. Neither describes the SDUI system in step
+4 — that part was traced from scratch, live, against a real profile page,
+because the endpoint they document (`/voyager/api/identity/profiles/.../profileView`)
+is the one now returning `410 Gone`.
 
 ## Project layout
 
@@ -65,15 +105,20 @@ scoped to what this assignment asks for.
 app/
   main.py            FastAPI app and the /v1/profile, /health routes
   auth.py            Obtains an li_at session (cookie env var, or login)
-  voyager_client.py  Raw HTTP client for LinkedIn's Voyager API
-  parser.py          Normalizes a raw Voyager response into our schema
+  voyager_client.py  Fetches the profile HTML page + 3 SDUI component calls
+  sdui_parser.py     Recovers text from LinkedIn's Flight-protocol UI tree
+  parser.py          Combines both into our ProfileResponse schema
   models.py          Pydantic response models
   config.py          Environment-variable settings
   exceptions.py      Typed errors, mapped to HTTP status codes in main.py
 tests/
-  test_parser.py     Unit tests for the parser, against a fixture
+  test_parser.py       Unit tests for parser.py, against a fixture
+  test_sdui_parser.py  Unit tests for sdui_parser.py, against synthetic
+                        fixtures modeled on a real captured response
 fixtures/
-  sample_profile_response.json  Synthetic Voyager-shaped response for tests
+  sample_profile_response.json   Synthetic raw dict for parser.py's tests
+  sdui_experience_response.txt   Synthetic Flight-protocol response
+  sdui_about_response.txt        (same, for the About card)
 Dockerfile
 render.yaml          Render.com deploy config
 ```
@@ -236,43 +281,33 @@ GET /v1/profile?url=https://www.linkedin.com/in/some-person/
     {
       "title": "Senior Software Engineer",
       "company": "Example Corp",
-      "company_urn": "urn:li:company:12345",
-      "location": "San Francisco, CA",
       "employment_type": "Full-time",
-      "starts_at": "2021-03",
-      "ends_at": null,
+      "location": "San Francisco, CA",
+      "date_range": "2021 - Present",
       "description": "Working on backend systems."
     }
   ],
   "education": [
     {
+      "degree": "B.S., Computer Science",
       "school": "State University",
-      "degree": "B.S.",
-      "field_of_study": "Computer Science",
-      "starts_at": "2014",
-      "ends_at": "2018",
-      "description": null,
-      "activities": "ACM club"
+      "date_range": "2014 - 2018",
+      "description": null
     }
   ],
-  "skills": ["Python", "Distributed Systems"],
-  "certifications": [
-    {
-      "name": "AWS Certified Solutions Architect",
-      "authority": "Amazon Web Services",
-      "starts_at": "2022-05",
-      "ends_at": null,
-      "license_number": "ABC123",
-      "url": "https://example.com/cert"
-    }
-  ],
-  "languages": [{ "name": "English", "proficiency": "NATIVE_OR_BILINGUAL" }]
+  "skills": [],
+  "certifications": [],
+  "languages": []
 }
 ```
 
-`ends_at: null` on an experience/certification entry means it's current
-(no end date on the profile). Any field LinkedIn didn't return for a given
-profile comes back as `null` (or an empty list for sections), not omitted.
+`date_range` is whatever free-text date range LinkedIn's page itself shows
+(e.g. `"2007 – Present"`, `"Jan 2024 - Present · 2 yrs 8 mos"`) — see
+[Known limitations](#known-limitations) for why this isn't split into
+separate start/end fields. `skills`, `certifications`, and `languages` are
+always empty lists right now — not a bug, see the same section. Any other
+field LinkedIn didn't return for a given profile comes back as `null` (or
+an empty list for sections), not omitted.
 
 **Errors**
 
@@ -353,19 +388,72 @@ any running instance.
 
 ## Known limitations
 
-- **Not tested against a live LinkedIn account.** This environment had no
-  LinkedIn credentials available, so the request/parsing logic is built
-  from well-documented Voyager API behavior and verified with a synthetic
-  fixture (`fixtures/sample_profile_response.json`, `tests/test_parser.py`)
-  rather than a real profile response. Before relying on this, run it
-  against your own account and a few real profiles, and expect to adjust
-  field names in `app/parser.py` if LinkedIn's actual response shape
-  differs from what's assumed here.
-- **LinkedIn's schema is undocumented and changes without notice.** The
-  parser matches entities by `$type` suffix rather than threading every
-  URN cross-reference, which is more resilient to small schema changes but
-  can occasionally miss a section, misorder entries, or need a new
-  `$type` suffix added if LinkedIn renames something.
+- **The individual pieces are verified against real LinkedIn traffic; the
+  full pipeline as committed here is not.** The HTTP calls in
+  `voyager_client.py` (the HTML page fetch and all three component POSTs)
+  were confirmed live, getting real `200` responses with real data back —
+  and `sdui_parser.py`'s extraction logic was verified against a real
+  captured `experienceTopLevelSection` response and matches it correctly.
+  What hasn't been run end-to-end in this repo is the whole pipeline
+  wired together against a live account (the synthetic fixtures in
+  `tests/` model the real shape but aren't the real response). Run it
+  against your own account and a few real profiles before trusting it
+  further, and expect to adjust `app/parser.py`'s meta-tag assumptions in
+  particular if they don't match.
+- **LinkedIn's rendering system is undocumented, changes without notice,
+  and already changed once during this project.** The original REST
+  endpoint this was built against (`/voyager/api/identity/profiles/.../profileView`)
+  is dead — confirmed live, mid-project, as `410 Gone`. The current
+  implementation targets what replaced it (see "How it works" above), but
+  that replacement is itself an internal UI-rendering system with no
+  external documentation, discovered by watching one real browser session's
+  network traffic. It could change again with no warning, the same way its
+  predecessor did.
+- **`app/sdui_parser.py` recovers text by pattern, not by a stable schema.**
+  There is no `companyName` or `startDate` field anywhere in LinkedIn's
+  response — this parser recognizes recurring UI component "shapes"
+  instead (a specific CSS-in-JS className means "this is a title", a
+  specific component type means "this is a short text field"). Those
+  classNames (`c2d1c236` for a title, `_61558a10` for a subtitle,
+  hard-coded in `sdui_parser.py`) are generated hashes tied to LinkedIn's
+  current frontend build and **will** change on their next rebuild, at
+  which point extraction breaks silently (empty/garbled fields, not an
+  error) until the new hashes are found the same way these were: capture a
+  real response in a browser's DevTools and diff it against what's here.
+- **Descriptions are matched to entries positionally, not by any id that
+  actually ties the two together.** If entry 2 of 5 has no description but
+  entries 1, 3, 4, and 5 do, the description meant for entry 3 will attach
+  to entry 2 instead, and every later one shifts by one. This is a
+  documented, deliberate tradeoff (see `sdui_parser.py`'s
+  `extract_card_entries` docstring) rather than an oversight — fixing it
+  properly means walking the full component tree instead of pattern-matching
+  chunk shapes.
+- **`educationTopLevelSection` is assumed, not verified.** Its component ID
+  follows the exact same naming convention as `experienceTopLevelSection`
+  (verified) and `aboutTopLevelSection` (verified), and the design system
+  strongly suggests the same title/subtitle/dates/location/description
+  shape — but no real education-bearing response was captured to confirm
+  it. If it's wrong, education will come back empty rather than error.
+- **Skills, certifications, and languages are not implemented at all.**
+  Their likely component IDs were seen in a real page load
+  (`profileCardsBelowActivityPart1` through `7`, among others) but never
+  fetched or decoded — there wasn't a confirmed mapping from those IDs to
+  which section is which. They always return empty lists rather than a
+  guess that might be silently wrong.
+- **Name/headline/location come from Open Graph meta tags, not the SDUI
+  system** — a deliberate, more stable choice (see "How it works"), but the
+  exact tag format assumed in `app/voyager_client.py`/`parser.py`
+  (`"<Name> - <Headline> | LinkedIn"` for the title, location leading
+  `og:description` before a `·`) is standard practice, not something
+  independently re-verified against a live capture in this project's own
+  testing. If LinkedIn's actual tags differ, name/headline/location parsing
+  will need adjusting the same way the rest of this did.
+- **Four requests per profile lookup, not one.** The HTML page plus three
+  SDUI component calls all happen sequentially for a single `GET
+  /v1/profile` call — `BATCH_DELAY_SECONDS` paces between *profiles* in a
+  batch, not between these four sub-requests for the same profile, so a
+  batch's real request volume against LinkedIn is `4 × number of URLs`,
+  not `1 ×`. Worth knowing when thinking about detection risk.
 - **Account/IP risk.** Scraping LinkedIn this way can get the backing
   account restricted or banned, and cloud-hosted IPs are more likely to be
   challenged than residential ones (see the deployment note above).
@@ -380,9 +468,10 @@ any running instance.
 - **Public profiles/URLs only.** Only `https://www.linkedin.com/in/<id>/`
   vanity URLs are supported — not `/pub/` legacy URLs, numeric profile
   IDs, or company pages.
-- **No pagination for long sections.** LinkedIn paginates very long
-  experience/education lists on its own site; `profileView` returns what
-  it returns in one call, and this API doesn't page beyond that.
+- **No pagination for long sections.** A profile with many positions
+  (LinkedIn's own UI showed 17 for one profile checked during development)
+  only returns the ones the default card renders, with no code here to
+  follow LinkedIn's own "Show all" pagination into a details sub-screen.
 - **Rate limiting is naive.** There's no request queue or backoff strategy
   beyond LinkedIn's own 429s — hammering the endpoint will get you rate
   limited or challenged faster.

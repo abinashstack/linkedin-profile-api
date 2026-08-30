@@ -1,4 +1,10 @@
-"""Response schema returned by the API. Field names are ours, not LinkedIn's."""
+"""Response schema returned by the API. Field names are ours, not LinkedIn's.
+
+Experience/Education dates changed shape in this version: LinkedIn's current
+profile rendering exposes a single free-text date range (e.g. "Jan 2024 -
+Present · 2 yrs 8 mos", "2007 – 2017") rather than separate structured
+start/end fields -- see the README's "Known limitations" for why splitting
+that reliably into starts_at/ends_at isn't done here."""
 from __future__ import annotations
 
 from typing import Optional
@@ -9,22 +15,17 @@ from pydantic import BaseModel, Field
 class Experience(BaseModel):
     title: Optional[str] = None
     company: Optional[str] = None
-    company_urn: Optional[str] = None
-    location: Optional[str] = None
     employment_type: Optional[str] = None
-    starts_at: Optional[str] = None  # "YYYY-MM" or "YYYY"
-    ends_at: Optional[str] = None    # None means current position
+    location: Optional[str] = None
+    date_range: Optional[str] = None
     description: Optional[str] = None
 
 
 class Education(BaseModel):
     school: Optional[str] = None
     degree: Optional[str] = None
-    field_of_study: Optional[str] = None
-    starts_at: Optional[str] = None
-    ends_at: Optional[str] = None
+    date_range: Optional[str] = None
     description: Optional[str] = None
-    activities: Optional[str] = None
 
 
 class Certification(BaseModel):

@@ -1,83 +1,34 @@
 {
-  "profile": {
-    "firstName": "Jane",
-    "lastName": "Doe",
-    "headline": "Senior Software Engineer at Example Corp",
-    "geoLocationName": "San Francisco, California, United States",
-    "summary": "Backend engineer focused on distributed systems.",
-    "entityUrn": "urn:li:fs_profile:ACoAAExample",
-    "defaultLocale": { "country": "US", "language": "en" },
-    "supportedLocales": [],
-    "versionTag": "abc123",
-    "showEducationOnProfileTopCard": true,
-    "miniProfile": {
-      "entityUrn": "urn:li:fs_miniProfile:ACoAAExample",
-      "objectUrn": "urn:li:member:123456789",
-      "publicIdentifier": "jane-doe",
-      "firstName": "Jane",
-      "lastName": "Doe",
-      "picture": {
-        "com.linkedin.common.VectorImage": {
-          "rootUrl": "https://media.licdn.com/dms/image/abc/",
-          "artifacts": [
-            { "width": 100, "height": 100, "fileIdentifyingUrlPathSegment": "100_100.jpg" },
-            { "width": 400, "height": 400, "fileIdentifyingUrlPathSegment": "400_400.jpg" }
-          ]
-        }
-      }
+  "meta": {
+    "title": "Jane Doe - Senior Software Engineer at Example Corp | LinkedIn",
+    "og_title": "Jane Doe - Senior Software Engineer at Example Corp | LinkedIn",
+    "og_description": "San Francisco, California, United States · 500+ connections",
+    "og_image": "https://media.licdn.com/dms/image/abc/400_400.jpg"
+  },
+  "about": "Backend engineer focused on distributed systems.",
+  "experience": [
+    {
+      "title": "Senior Software Engineer",
+      "subtitle": "Example Corp · Full-time",
+      "dates": "2021 - Present",
+      "location": "San Francisco, CA",
+      "description": "Working on backend systems."
+    },
+    {
+      "title": "Software Engineer",
+      "subtitle": "Prior Co · Full-time",
+      "dates": "2018 - 2021",
+      "location": "Remote",
+      "description": "Worked on the platform team."
     }
-  },
-  "positionView": {
-    "elements": [
-      {
-        "title": "Senior Software Engineer",
-        "companyName": "Example Corp",
-        "companyUrn": "urn:li:company:12345",
-        "locationName": "San Francisco, CA",
-        "employmentType": "Full-time",
-        "dateRange": { "start": { "month": 3, "year": 2021 } },
-        "description": "Working on backend systems.",
-        "company": { "miniCompany": { "name": "Example Corp" } }
-      },
-      {
-        "title": "Software Engineer",
-        "companyName": "Prior Co",
-        "companyUrn": "urn:li:company:6789",
-        "locationName": "Remote",
-        "employmentType": "Full-time",
-        "dateRange": { "start": { "month": 6, "year": 2018 }, "end": { "month": 2, "year": 2021 } },
-        "description": "Worked on the platform team.",
-        "company": { "miniCompany": { "name": "Prior Co" } }
-      }
-    ]
-  },
-  "educationView": {
-    "elements": [
-      {
-        "schoolName": "State University",
-        "degreeName": "B.S.",
-        "fieldOfStudy": "Computer Science",
-        "dateRange": { "start": { "year": 2014 }, "end": { "year": 2018 } },
-        "activities": "ACM club",
-        "school": { "schoolName": "State University" }
-      }
-    ]
-  },
-  "skillView": {
-    "elements": [{ "name": "Python" }, { "name": "Distributed Systems" }]
-  },
-  "certificationView": {
-    "elements": [
-      {
-        "name": "AWS Certified Solutions Architect",
-        "authority": "Amazon Web Services",
-        "licenseNumber": "ABC123",
-        "url": "https://example.com/cert",
-        "timePeriod": { "startDate": { "month": 5, "year": 2022 } }
-      }
-    ]
-  },
-  "languageView": {
-    "elements": [{ "name": "English", "proficiency": "NATIVE_OR_BILINGUAL" }]
-  }
+  ],
+  "education": [
+    {
+      "title": "B.S., Computer Science",
+      "subtitle": "State University",
+      "dates": "2014 - 2018",
+      "location": null,
+      "description": null
+    }
+  ]
 }

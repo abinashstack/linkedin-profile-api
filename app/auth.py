@@ -53,7 +53,7 @@ def _load_cached_session() -> dict[str, str] | None:
     if not path.exists():
         return None
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
     if data.get("li_at") and data.get("JSESSIONID"):

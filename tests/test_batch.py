@@ -11,7 +11,7 @@ from app.exceptions import ChallengeRequiredError, ProfileNotFoundError
 from app.main import _cache, app
 
 FIXTURE = json.loads(
-    (Path(__file__).parent.parent / "fixtures" / "sample_profile_response.json").read_text()
+    (Path(__file__).parent.parent / "fixtures" / "sample_profile_response.json").read_text(encoding="utf-8")
 )
 
 

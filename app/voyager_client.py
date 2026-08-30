@@ -1,10 +1,33 @@
 """
-Thin client for LinkedIn's internal "Voyager" API -- the JSON API
-linkedin.com's own web front-end calls under the hood. This talks to it
-directly over HTTPS with plain requests; nothing here renders a page or
-drives a browser.
+Client for LinkedIn's current profile-rendering system.
+
+The old approach here hit `/voyager/api/identity/profiles/<id>/profileView`
+(a REST endpoint) and later a GraphQL query -- both are gone; LinkedIn now
+renders profile pages through a React Server Components ("Flight" protocol)
+action endpoint instead. See app/sdui_parser.py for what that response
+looks like and why it needs a different kind of parsing than a normal JSON
+API. This client fetches:
+
+1. The plain profile HTML page, for name/headline/location/photo, read
+   from standard `<title>` / Open Graph meta tags (`og:title`,
+   `og:description`, `og:image`) rather than the SDUI system -- these tags
+   exist for link-preview purposes on any page that gets shared, so they
+   are a much more stable target than the component tree. This has not
+   been independently re-verified against a live capture in this
+   project's own testing (see the README's "Known limitations"); it's
+   standard practice for a page meant to be shared as a link, not a guess
+   pulled from nowhere.
+2. Three SDUI "component" actions (about/experience/education), parsed by
+   app/sdui_parser.py.
+
+Both are needed for one profile lookup, so a single call here makes four
+requests to LinkedIn, not one -- relevant to how aggressively this gets
+called (see BATCH_DELAY_SECONDS in app/config.py).
 """
 from __future__ import annotations
+
+import html
+import re
 
 import httpx
 
@@ -16,57 +39,117 @@ from app.exceptions import (
     SessionExpiredError,
     UpstreamError,
 )
+from app.sdui_parser import extract_about_text, extract_card_entries, parse_flight_chunks
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-PROFILE_VIEW_URL = "https://www.linkedin.com/voyager/api/identity/profiles/{public_id}/profileView"
+PROFILE_PAGE_URL = "https://www.linkedin.com/in/{public_id}/"
+COMPONENT_URL = "https://www.linkedin.com/flagship-web/rsc-action/actions/component"
+
+# Only aboutTopLevelSection and experienceTopLevelSection have been verified
+# against a real captured response; educationTopLevelSection is assumed to
+# follow the identical shape (same design system, same naming convention)
+# but has not been independently confirmed.
+COMPONENT_IDS = {
+    "about": "com.linkedin.sdui.generated.profile.dsl.impl.aboutTopLevelSection",
+    "experience": "com.linkedin.sdui.generated.profile.dsl.impl.experienceTopLevelSection",
+    "education": "com.linkedin.sdui.generated.profile.dsl.impl.educationTopLevelSection",
+}
+
+_TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_OG_TITLE_RE = re.compile(r'<meta[^>]+property="og:title"[^>]+content="([^"]*)"', re.IGNORECASE)
+_OG_DESCRIPTION_RE = re.compile(r'<meta[^>]+property="og:description"[^>]+content="([^"]*)"', re.IGNORECASE)
+_OG_IMAGE_RE = re.compile(r'<meta[^>]+property="og:image"[^>]+content="([^"]*)"', re.IGNORECASE)
+
+
+def _raise_for_status(response: httpx.Response, context: str) -> None:
+    if response.status_code == 200:
+        return
+    if response.status_code == 404:
+        raise ProfileNotFoundError(f"No profile found ({context}), or it's private.")
+    if response.status_code in (401, 403):
+        raise SessionExpiredError(
+            f"LinkedIn rejected the session cookie ({context}, expired or invalid). Refresh LINKEDIN_LI_AT."
+        )
+    if response.status_code == 429:
+        raise RateLimitedError(f"LinkedIn rate-limited this session ({context}).")
+    if response.status_code == 999:
+        raise ChallengeRequiredError(f"LinkedIn returned its anti-scraping challenge page ({context}, HTTP 999).")
+    if response.status_code == 410:
+        raise UpstreamError(
+            f"LinkedIn returned HTTP 410 Gone ({context}) -- this endpoint or componentId has likely "
+            "been retired or renamed since this was last checked. See the README's 'Known limitations'."
+        )
+    raise UpstreamError(f"Unexpected response from LinkedIn ({context}): HTTP {response.status_code}")
+
+
+def _parse_meta_tags(page_html: str) -> dict[str, str | None]:
+    def _unescape(match: re.Match | None) -> str | None:
+        return html.unescape(match.group(1)).strip() if match else None
+
+    return {
+        "title": _unescape(_TITLE_RE.search(page_html)),
+        "og_title": _unescape(_OG_TITLE_RE.search(page_html)),
+        "og_description": _unescape(_OG_DESCRIPTION_RE.search(page_html)),
+        "og_image": _unescape(_OG_IMAGE_RE.search(page_html)),
+    }
 
 
 class VoyagerClient:
     def __init__(self, cookies: dict[str, str]):
         csrf_token = cookies["JSESSIONID"].strip('"')
+        self._cookies = cookies
+        self._csrf_token = csrf_token
         self._client = httpx.AsyncClient(
             cookies=cookies,
-            headers={
-                "User-Agent": USER_AGENT,
-                "csrf-token": csrf_token,
-                "x-restli-protocol-version": "2.0.0",
-                "x-li-lang": "en_US",
-                "accept-language": "en-US,en;q=0.9",
-                # Deliberately no "accept" override here: requesting the old
-                # "application/vnd.linkedin.normalized+json+2.1" representation
-                # now gets HTTP 410 Gone from LinkedIn. Leaving it unset gets
-                # the current default representation parser.py expects.
-            },
+            headers={"User-Agent": USER_AGENT, "csrf-token": csrf_token},
             timeout=settings.request_timeout_seconds,
+            follow_redirects=True,
         )
 
-    async def get_profile_view(self, public_id: str) -> dict:
-        response = await self._client.get(PROFILE_VIEW_URL.format(public_id=public_id))
+    async def _fetch_component(self, component_key: str, public_id: str) -> dict:
+        component_id = COMPONENT_IDS[component_key]
+        params = {"componentId": component_id, "sduiid": component_id}
+        body = {
+            "clientArguments": {
+                "payload": {"isSelfView": False, "vanityName": public_id},
+                "states": [],
+                "requestMetadata": {"$type": "proto.sdui.common.RequestMetadata"},
+                "screenId": "com.linkedin.sdui.flagshipnav.home.Home",
+                "knownTemplateIds": [],
+            }
+        }
+        response = await self._client.post(
+            COMPONENT_URL,
+            params=params,
+            json=body,
+            headers={"content-type": "application/json"},
+        )
+        _raise_for_status(response, component_key)
+        return parse_flight_chunks(response.text)
 
-        if response.status_code == 200:
-            return response.json()
-        if response.status_code == 404:
-            raise ProfileNotFoundError(f"No profile found for '{public_id}' (or it's private).")
-        if response.status_code in (401, 403):
-            raise SessionExpiredError(
-                "LinkedIn rejected the session cookie (expired or invalid). Refresh LINKEDIN_LI_AT."
-            )
-        if response.status_code == 429:
-            raise RateLimitedError("LinkedIn rate-limited this session. Back off and retry later.")
-        if response.status_code == 999:
-            raise ChallengeRequiredError("LinkedIn returned its anti-scraping challenge page (HTTP 999).")
-        if response.status_code == 410:
-            raise UpstreamError(
-                "LinkedIn returned HTTP 410 Gone for this request. That usually means the specific "
-                "representation/headers this client requested have been retired server-side (Rest.li "
-                "uses 410 for that, not for a missing profile) -- check for LinkedIn API changes rather "
-                "than assuming this profile doesn't exist."
-            )
-        raise UpstreamError(f"Unexpected response from LinkedIn: HTTP {response.status_code}")
+    async def get_profile_view(self, public_id: str) -> dict:
+        """Fetches everything needed for one profile: the HTML page (for
+        name/headline/location/photo) plus the about/experience/education
+        SDUI cards. Returns a raw dict for app/parser.py to turn into a
+        ProfileResponse."""
+        page_response = await self._client.get(PROFILE_PAGE_URL.format(public_id=public_id))
+        _raise_for_status(page_response, "profile page")
+        meta = _parse_meta_tags(page_response.text)
+
+        about_chunks = await self._fetch_component("about", public_id)
+        experience_chunks = await self._fetch_component("experience", public_id)
+        education_chunks = await self._fetch_component("education", public_id)
+
+        return {
+            "meta": meta,
+            "about": extract_about_text(about_chunks),
+            "experience": extract_card_entries(experience_chunks),
+            "education": extract_card_entries(education_chunks),
+        }
 
     async def aclose(self) -> None:
         await self._client.aclose()
