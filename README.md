@@ -100,6 +100,37 @@ documents the classic REST flow. Neither describes the SDUI system in step
 because the endpoint they document (`/voyager/api/identity/profiles/.../profileView`)
 is the one now returning `410 Gone`.
 
+Visually, one profile lookup looks like this:
+
+```mermaid
+flowchart TD
+    Client["Browser UI (/) or API caller"] -->|"POST /v1/profiles/batch\n(or GET/POST /v1/profile)"| Backend["FastAPI backend"]
+    Backend --> PID["extract_public_id()\nURL or bare handle -> public_id"]
+
+    PID --> HTML["GET linkedin.com/in/&lt;public_id&gt;/\n(plain HTML page)"]
+    HTML --> Meta["Read &lt;title&gt; / og:title /\nog:description / og:image"]
+    Meta --> Basic["name, headline,\nlocation, photo"]
+
+    PID --> C1["POST .../actions/component\ncomponentId = aboutTopLevelSection"]
+    PID --> C2["POST .../actions/component\ncomponentId = experienceTopLevelSection"]
+    PID --> C3["POST .../actions/component\ncomponentId = educationTopLevelSection"]
+    PID --> C4["POST .../actions/component\ncomponentId = skillsTopLevelSection"]
+
+    C1 --> SDUI["sdui_parser.py\nresolve Flight-protocol aliases by\nmodule hash, recover text by shape"]
+    C2 --> SDUI
+    C3 --> SDUI
+    C4 --> SDUI
+    SDUI --> Sections["about, experience,\neducation, skills"]
+
+    Basic --> Combine["parser.py: merge into ProfileResponse"]
+    Sections --> Combine
+    Combine --> Out["JSON response\n(cached in memory per public_id)"]
+```
+
+Five requests to LinkedIn per profile, all authenticated with the same
+session cookie — worth keeping in mind for `BATCH_DELAY_SECONDS` and the
+account-risk notes in [Known limitations](#known-limitations).
+
 ## The debugging journey
 
 The "How it works" section above describes the system as it ended up. It
