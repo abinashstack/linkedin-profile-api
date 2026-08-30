@@ -30,5 +30,6 @@
       "location": null,
       "description": null
     }
-  ]
+  ],
+  "skills": ["Python", "Distributed Systems"]
 }

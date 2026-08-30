@@ -74,11 +74,15 @@ def test_parse_profile_education():
     assert profile.education[0].date_range == "2014 - 2018"
 
 
-def test_parse_profile_skills_certs_languages_are_empty():
+def test_parse_profile_skills():
+    profile = _parse()
+    assert profile.skills == ["Python", "Distributed Systems"]
+
+
+def test_parse_profile_certs_and_languages_are_empty():
     # Not implemented against the current LinkedIn source yet -- always
     # empty, not a silently-wrong guess. See README "Known limitations".
     profile = _parse()
-    assert profile.skills == []
     assert profile.certifications == []
     assert profile.languages == []
 

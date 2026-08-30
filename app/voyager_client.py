@@ -17,10 +17,10 @@ API. This client fetches:
    project's own testing (see the README's "Known limitations"); it's
    standard practice for a page meant to be shared as a link, not a guess
    pulled from nowhere.
-2. Three SDUI "component" actions (about/experience/education), parsed by
-   app/sdui_parser.py.
+2. Four SDUI "component" actions (about/experience/education/skills),
+   parsed by app/sdui_parser.py.
 
-Both are needed for one profile lookup, so a single call here makes four
+Both are needed for one profile lookup, so a single call here makes five
 requests to LinkedIn, not one -- relevant to how aggressively this gets
 called (see BATCH_DELAY_SECONDS in app/config.py).
 """
@@ -39,7 +39,12 @@ from app.exceptions import (
     SessionExpiredError,
     UpstreamError,
 )
-from app.sdui_parser import extract_about_text, extract_card_entries, parse_flight_chunks
+from app.sdui_parser import (
+    extract_about_text,
+    extract_card_entries,
+    extract_skills,
+    parse_flight_response,
+)
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -49,14 +54,15 @@ USER_AGENT = (
 PROFILE_PAGE_URL = "https://www.linkedin.com/in/{public_id}/"
 COMPONENT_URL = "https://www.linkedin.com/flagship-web/rsc-action/actions/component"
 
-# Only aboutTopLevelSection and experienceTopLevelSection have been verified
-# against a real captured response; educationTopLevelSection is assumed to
-# follow the identical shape (same design system, same naming convention)
-# but has not been independently confirmed.
+# aboutTopLevelSection, experienceTopLevelSection, and skillsTopLevelSection
+# have been verified against real captured responses; educationTopLevelSection
+# is assumed to follow experienceTopLevelSection's shape (same design system,
+# same naming convention) but has not been independently confirmed.
 COMPONENT_IDS = {
     "about": "com.linkedin.sdui.generated.profile.dsl.impl.aboutTopLevelSection",
     "experience": "com.linkedin.sdui.generated.profile.dsl.impl.experienceTopLevelSection",
     "education": "com.linkedin.sdui.generated.profile.dsl.impl.educationTopLevelSection",
+    "skills": "com.linkedin.sdui.generated.profile.dsl.impl.skillsTopLevelSection",
 }
 
 _TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
@@ -110,7 +116,7 @@ class VoyagerClient:
             follow_redirects=True,
         )
 
-    async def _fetch_component(self, component_key: str, public_id: str) -> dict:
+    async def _fetch_component(self, component_key: str, public_id: str) -> tuple[dict, dict]:
         component_id = COMPONENT_IDS[component_key]
         params = {"componentId": component_id, "sduiid": component_id}
         body = {
@@ -129,26 +135,28 @@ class VoyagerClient:
             headers={"content-type": "application/json"},
         )
         _raise_for_status(response, component_key)
-        return parse_flight_chunks(response.text)
+        return parse_flight_response(response.text)
 
     async def get_profile_view(self, public_id: str) -> dict:
         """Fetches everything needed for one profile: the HTML page (for
-        name/headline/location/photo) plus the about/experience/education
-        SDUI cards. Returns a raw dict for app/parser.py to turn into a
-        ProfileResponse."""
+        name/headline/location/photo) plus the about/experience/education/
+        skills SDUI cards. Returns a raw dict for app/parser.py to turn
+        into a ProfileResponse."""
         page_response = await self._client.get(PROFILE_PAGE_URL.format(public_id=public_id))
         _raise_for_status(page_response, "profile page")
         meta = _parse_meta_tags(page_response.text)
 
-        about_chunks = await self._fetch_component("about", public_id)
-        experience_chunks = await self._fetch_component("experience", public_id)
-        education_chunks = await self._fetch_component("education", public_id)
+        about_chunks, about_aliases = await self._fetch_component("about", public_id)
+        experience_chunks, experience_aliases = await self._fetch_component("experience", public_id)
+        education_chunks, education_aliases = await self._fetch_component("education", public_id)
+        skills_chunks, skills_aliases = await self._fetch_component("skills", public_id)
 
         return {
             "meta": meta,
-            "about": extract_about_text(about_chunks),
-            "experience": extract_card_entries(experience_chunks),
-            "education": extract_card_entries(education_chunks),
+            "about": extract_about_text(about_chunks, about_aliases),
+            "experience": extract_card_entries(experience_chunks, experience_aliases),
+            "education": extract_card_entries(education_chunks, education_aliases),
+            "skills": extract_skills(skills_chunks, skills_aliases),
         }
 
     async def aclose(self) -> None:

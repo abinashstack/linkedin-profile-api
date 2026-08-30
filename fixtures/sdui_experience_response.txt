@@ -1,3 +1,5 @@
+20:I["85b20fca39223dffe536dd03122e5f56",[],"default"]
+46:I["1e9b95c01e7f142c1ba9a289f4714a9c",[],"default"]
 9:["$","$L46",null,{"textProps":{"children":["Led backend team and shipped the flagship product."]},"expansionKey":"exp-key-1"}]
 f:["$","$L46",null,{"textProps":{"children":["Owned the platform migration end to end."]},"expansionKey":"exp-key-2"}]
 15:["$","$L46",null,{"textProps":{"children":["Advised clients on security architecture."]},"expansionKey":"exp-key-3"}]

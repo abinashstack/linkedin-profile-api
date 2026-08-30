@@ -8,9 +8,9 @@ That raw dict combines two very different sources (see voyager_client.py):
 - `about`/`experience`/`education`: text already extracted from LinkedIn's
   SDUI "Flight protocol" component responses by app/sdui_parser.py.
 
-Skills, certifications, and languages are not implemented against this new
-source yet -- see the README's "Known limitations". They're always empty
-lists here, not silently-wrong guesses.
+Certifications and languages are not implemented against this new source
+yet -- see the README's "Known limitations". They're always empty lists
+here, not silently-wrong guesses.
 """
 from __future__ import annotations
 
@@ -128,7 +128,7 @@ def parse_profile(raw: dict[str, Any], public_id: str, profile_url: str) -> Prof
         background_image=None,
         experience=experience,
         education=education,
-        skills=[],
+        skills=raw.get("skills", []),
         certifications=[],
         languages=[],
     )

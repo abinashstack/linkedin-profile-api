@@ -1,0 +1,5 @@
+d:I["85b20fca39223dffe536dd03122e5f56",[],"default"]
+f:["$","$Ld",null,{"textProps":{"fontWeight":"bold","fontSize":"medium","children":["Backend Development"]}}]
+11:["$","$Ld",null,{"textProps":{"fontWeight":"normal","fontSize":"small","children":["Used at Example Corp"]}}]
+16:["$","$Ld",null,{"textProps":{"fontWeight":"bold","fontSize":"medium","children":["Distributed Systems"]}}]
+18:["$","$Ld",null,{"textProps":{"fontWeight":"normal","fontSize":"small","children":["Endorsed by 3 people"]}}]
