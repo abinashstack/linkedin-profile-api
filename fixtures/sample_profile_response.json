@@ -1,0 +1,66 @@
+{
+  "included": [
+    {
+      "$type": "com.linkedin.voyager.identity.profile.Profile",
+      "firstName": "Jane",
+      "lastName": "Doe",
+      "headline": "Senior Software Engineer at Example Corp",
+      "geoLocationName": "San Francisco, California, United States",
+      "summary": "Backend engineer focused on distributed systems.",
+      "profilePicture": {
+        "displayImageReference": {
+          "vectorImage": {
+            "rootUrl": "https://media.licdn.com/dms/image/abc/",
+            "artifacts": [
+              { "width": 100, "height": 100, "fileIdentifyingUrlPathSegment": "100_100.jpg" },
+              { "width": 400, "height": 400, "fileIdentifyingUrlPathSegment": "400_400.jpg" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "$type": "com.linkedin.voyager.identity.profile.Position",
+      "title": "Senior Software Engineer",
+      "companyName": "Example Corp",
+      "companyUrn": "urn:li:company:12345",
+      "locationName": "San Francisco, CA",
+      "employmentType": "Full-time",
+      "dateRange": { "start": { "month": 3, "year": 2021 } },
+      "description": "Working on backend systems."
+    },
+    {
+      "$type": "com.linkedin.voyager.identity.profile.Position",
+      "title": "Software Engineer",
+      "companyName": "Prior Co",
+      "companyUrn": "urn:li:company:6789",
+      "locationName": "Remote",
+      "employmentType": "Full-time",
+      "dateRange": { "start": { "month": 6, "year": 2018 }, "end": { "month": 2, "year": 2021 } },
+      "description": "Worked on the platform team."
+    },
+    {
+      "$type": "com.linkedin.voyager.identity.profile.Education",
+      "schoolName": "State University",
+      "degreeName": "B.S.",
+      "fieldOfStudy": "Computer Science",
+      "dateRange": { "start": { "year": 2014 }, "end": { "year": 2018 } },
+      "activities": "ACM club"
+    },
+    { "$type": "com.linkedin.voyager.identity.profile.Skill", "name": "Python" },
+    { "$type": "com.linkedin.voyager.identity.profile.Skill", "name": "Distributed Systems" },
+    {
+      "$type": "com.linkedin.voyager.identity.profile.Certification",
+      "name": "AWS Certified Solutions Architect",
+      "authority": "Amazon Web Services",
+      "licenseNumber": "ABC123",
+      "url": "https://example.com/cert",
+      "timePeriod": { "startDate": { "month": 5, "year": 2022 } }
+    },
+    {
+      "$type": "com.linkedin.voyager.identity.profile.Language",
+      "name": "English",
+      "proficiency": "NATIVE_OR_BILINGUAL"
+    }
+  ]
+}
