@@ -72,3 +72,28 @@ def test_parse_profile_education_skills_certs_languages():
     assert profile.certifications[0].name == "AWS Certified Solutions Architect"
     assert profile.certifications[0].starts_at == "2022-05"
     assert profile.languages[0].proficiency == "NATIVE_OR_BILINGUAL"
+
+
+def test_profile_picture_prefers_top_level_reference_over_mini_profile():
+    # profile.profilePicture (when present) is generally higher-res than
+    # miniProfile's cached thumbnail, and uses a different VectorImage key
+    # spelling ("vectorImage" vs. "com.linkedin.common.VectorImage") --
+    # both need to resolve correctly.
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["profile"]["profilePicture"] = {
+        "displayImageReference": {
+            "vectorImage": {
+                "rootUrl": "https://media.licdn.com/dms/image/full/",
+                "artifacts": [
+                    {"width": 800, "height": 800, "fileIdentifyingUrlPathSegment": "800_800.jpg"},
+                ],
+            }
+        }
+    }
+    profile = parse_profile(fixture, public_id="jane-doe", profile_url=PROFILE_URL)
+    assert profile.profile_picture.url.endswith("800_800.jpg")
+
+
+def test_profile_picture_falls_back_to_mini_profile_when_no_top_level_picture():
+    profile = _parse()
+    assert profile.profile_picture.url.endswith("400_400.jpg")

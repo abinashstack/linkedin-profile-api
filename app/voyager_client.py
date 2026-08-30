@@ -35,7 +35,11 @@ class VoyagerClient:
                 "csrf-token": csrf_token,
                 "x-restli-protocol-version": "2.0.0",
                 "x-li-lang": "en_US",
-                "accept": "application/vnd.linkedin.normalized+json+2.1",
+                "accept-language": "en-US,en;q=0.9",
+                # Deliberately no "accept" override here: requesting the old
+                # "application/vnd.linkedin.normalized+json+2.1" representation
+                # now gets HTTP 410 Gone from LinkedIn. Leaving it unset gets
+                # the current default representation parser.py expects.
             },
             timeout=settings.request_timeout_seconds,
         )
@@ -55,6 +59,13 @@ class VoyagerClient:
             raise RateLimitedError("LinkedIn rate-limited this session. Back off and retry later.")
         if response.status_code == 999:
             raise ChallengeRequiredError("LinkedIn returned its anti-scraping challenge page (HTTP 999).")
+        if response.status_code == 410:
+            raise UpstreamError(
+                "LinkedIn returned HTTP 410 Gone for this request. That usually means the specific "
+                "representation/headers this client requested have been retired server-side (Rest.li "
+                "uses 410 for that, not for a missing profile) -- check for LinkedIn API changes rather "
+                "than assuming this profile doesn't exist."
+            )
         raise UpstreamError(f"Unexpected response from LinkedIn: HTTP {response.status_code}")
 
     async def aclose(self) -> None:

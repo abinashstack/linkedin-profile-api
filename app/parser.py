@@ -1,14 +1,25 @@
 """
 Turns a raw LinkedIn Voyager `profileView` response into our ProfileResponse.
 
-LinkedIn's Voyager API returns a "normalized" document: a flat `included`
-list of typed entities (each tagged with a `$type`, e.g.
-`com.linkedin.voyager.identity.profile.Profile`), cross-referenced by URN
-rather than nested. Rather than threading every reference field (fragile --
-LinkedIn renames these often), we scan `included` for entities whose `$type`
-ends in a known suffix and treat every match as one row of that section.
-This is resilient to reference-shape changes but does not guarantee the same
-ordering the profile page shows. See the README's "Known limitations".
+An earlier version of this parser targeted a different response shape: a
+flat `included` array of `$type`-tagged entities, requested by sending
+`accept: application/vnd.linkedin.normalized+json+2.1`. Against a live
+account that request now gets HTTP 410 Gone from LinkedIn -- not 404 --
+which is Rest.li's way of saying that specific representation has been
+retired, not that the endpoint or the profile is gone.
+
+The endpoint itself (`/identity/profiles/<public_id>/profileView`) is
+unchanged; dropping that `accept` override gets LinkedIn's current default
+representation instead: one `profile` object plus separate `<section>View`
+objects (`positionView`, `educationView`, `skillView`, `certificationView`,
+`languageView`), each holding `{"elements": [...]}`. This shape (including
+the exact field names below) is corroborated by open-linkedin-api
+(https://github.com/EseToni/open-linkedin-api), a community fork of the
+project this was originally modeled on -- that project's own upstream
+(tomquirk/linkedin-api) has since gone private, presumably for the same
+reason this parser needed rewriting. This still hasn't been verified
+against a live response from this codebase's own test account; see the
+README's "Known limitations".
 """
 from __future__ import annotations
 
@@ -54,13 +65,10 @@ def extract_public_id(value: str) -> str:
     return match.group(1)
 
 
-def _entities_by_type_suffix(included: list[dict], suffix: str) -> list[dict]:
-    return [e for e in included if str(e.get("$type", "")).endswith(suffix)]
-
-
-def _find_profile_entity(included: list[dict]) -> dict:
-    matches = _entities_by_type_suffix(included, ".identity.profile.Profile")
-    return matches[0] if matches else {}
+def _elements(raw: dict, view_key: str) -> list[dict]:
+    """e.g. raw["positionView"]["elements"], defaulting to [] if the section
+    is absent (LinkedIn omits empty sections' views entirely for some profiles)."""
+    return (raw.get(view_key) or {}).get("elements", [])
 
 
 def _date_to_str(date_obj: dict | None) -> str | None:
@@ -81,25 +89,30 @@ def _get_period(entity: dict) -> tuple[dict | None, dict | None]:
     return start, end
 
 
-def _extract_vector_image(obj: dict | None) -> dict | None:
-    if not obj:
+def _find_vector_image(node: Any) -> dict | None:
+    """Recursively hunt for a Voyager VectorImage dict (identified by having
+    an "artifacts" list) inside `node`. LinkedIn wraps this union-typed field
+    under different key spellings in different places (miniProfile's cached
+    thumbnail vs. a full profilePicture reference), so this checks each one
+    rather than assuming a single fixed path."""
+    if not isinstance(node, dict):
         return None
-    if "artifacts" in obj:
-        return obj
-    if "vectorImage" in obj:
-        return _extract_vector_image(obj["vectorImage"])
-    if "displayImageReference" in obj:
-        return _extract_vector_image(obj["displayImageReference"])
+    if "artifacts" in node:
+        return node
+    for key in ("com.linkedin.common.VectorImage", "vectorImage", "displayImageReference"):
+        if key in node:
+            found = _find_vector_image(node[key])
+            if found:
+                return found
     return None
 
 
-def _best_image(obj: dict | None) -> ProfileImage | None:
-    """Pick the highest-resolution artifact out of a Voyager vectorImage object."""
-    vector_image = _extract_vector_image(obj)
-    if not vector_image:
+def _image_from_vector(vector: dict | None) -> ProfileImage | None:
+    """Pick the highest-resolution artifact out of a Voyager VectorImage object."""
+    if not vector:
         return None
-    root_url = vector_image.get("rootUrl", "")
-    artifacts = vector_image.get("artifacts", [])
+    root_url = vector.get("rootUrl", "")
+    artifacts = vector.get("artifacts", [])
     if not root_url or not artifacts:
         return None
     best = max(artifacts, key=lambda a: a.get("width", 0))
@@ -109,16 +122,25 @@ def _best_image(obj: dict | None) -> ProfileImage | None:
     return ProfileImage(url=root_url + segment, width=best.get("width"), height=best.get("height"))
 
 
-def parse_profile(raw: dict[str, Any], public_id: str, profile_url: str) -> ProfileResponse:
-    included: list[dict] = raw.get("included", [])
-    profile_entity = _find_profile_entity(included)
+def _profile_image(node: Any) -> ProfileImage | None:
+    return _image_from_vector(_find_vector_image(node))
 
-    name = " ".join(
-        p for p in [profile_entity.get("firstName"), profile_entity.get("lastName")] if p
-    ) or None
+
+def parse_profile(raw: dict[str, Any], public_id: str, profile_url: str) -> ProfileResponse:
+    profile = raw.get("profile") or {}
+    mini_profile = profile.get("miniProfile") or {}
+
+    name = " ".join(p for p in [profile.get("firstName"), profile.get("lastName")] if p) or None
+
+    # A full profilePicture reference (if present) is generally higher-res
+    # than miniProfile's cached thumbnail, so prefer it when both exist.
+    profile_picture = _profile_image(profile.get("profilePicture")) or _profile_image(
+        mini_profile.get("picture")
+    )
+    background_image = _profile_image(profile.get("backgroundImage"))
 
     experience: list[Experience] = []
-    for pos in _entities_by_type_suffix(included, ".identity.profile.Position"):
+    for pos in _elements(raw, "positionView"):
         start, end = _get_period(pos)
         experience.append(
             Experience(
@@ -134,11 +156,14 @@ def parse_profile(raw: dict[str, Any], public_id: str, profile_url: str) -> Prof
         )
 
     education: list[Education] = []
-    for edu in _entities_by_type_suffix(included, ".identity.profile.Education"):
+    for edu in _elements(raw, "educationView"):
         start, end = _get_period(edu)
+        # schoolName is usually a denormalized top-level field, but fall back
+        # to the nested school reference if a profile is missing it.
+        school_name = edu.get("schoolName") or (edu.get("school") or {}).get("schoolName")
         education.append(
             Education(
-                school=edu.get("schoolName"),
+                school=school_name,
                 degree=edu.get("degreeName"),
                 field_of_study=edu.get("fieldOfStudy"),
                 starts_at=_date_to_str(start),
@@ -148,14 +173,10 @@ def parse_profile(raw: dict[str, Any], public_id: str, profile_url: str) -> Prof
             )
         )
 
-    skills = [
-        s["name"]
-        for s in _entities_by_type_suffix(included, ".identity.profile.Skill")
-        if s.get("name")
-    ]
+    skills = [s["name"] for s in _elements(raw, "skillView") if s.get("name")]
 
     certifications: list[Certification] = []
-    for cert in _entities_by_type_suffix(included, ".identity.profile.Certification"):
+    for cert in _elements(raw, "certificationView"):
         start, end = _get_period(cert)
         certifications.append(
             Certification(
@@ -170,18 +191,18 @@ def parse_profile(raw: dict[str, Any], public_id: str, profile_url: str) -> Prof
 
     languages = [
         Language(name=lang.get("name"), proficiency=lang.get("proficiency"))
-        for lang in _entities_by_type_suffix(included, ".identity.profile.Language")
+        for lang in _elements(raw, "languageView")
     ]
 
     return ProfileResponse(
         public_id=public_id,
         profile_url=profile_url,
         name=name,
-        headline=profile_entity.get("headline"),
-        location=profile_entity.get("geoLocationName") or profile_entity.get("locationName"),
-        about=profile_entity.get("summary"),
-        profile_picture=_best_image(profile_entity.get("profilePicture")),
-        background_image=_best_image(profile_entity.get("backgroundImage")),
+        headline=profile.get("headline"),
+        location=profile.get("geoLocationName") or profile.get("locationName"),
+        about=profile.get("summary"),
+        profile_picture=profile_picture,
+        background_image=background_image,
         experience=experience,
         education=education,
         skills=skills,
