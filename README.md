@@ -223,10 +223,15 @@ again, and partly because "it just worked" would be a lie.
    profiles' raw HTML directly, which is also how the actual mechanism
    (`<title>` for name, a bare `<span>` right after it for headline) got
    found and confirmed. Location and photo are still unresolved; see Known
-   Limitations. This is the clearest illustration in the whole project of
-   why "verified against a real account" and "verified against fixtures
-   modeling what a real account should look like" are different claims —
-   the second one missed both of these.
+   Limitations. That same real response also turned up a third,
+   unrelated bug: an en-dash and a curly apostrophe both came back
+   mojibake'd, because LinkedIn doesn't always declare a charset on these
+   responses and `httpx` guessed wrong when left to auto-detect one --
+   fixed by forcing `response.encoding = "utf-8"` explicitly rather than
+   trusting the guess. This is the clearest illustration in the whole
+   project of why "verified against a real account" and "verified against
+   fixtures modeling what a real account should look like" are different
+   claims — the second one missed all three of these.
 
 None of this was available as a single write-up anywhere at the time of
 building it — every step past #2 came from watching real traffic and

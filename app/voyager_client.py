@@ -173,6 +173,11 @@ class VoyagerClient:
             headers={"content-type": "application/json"},
         )
         _raise_for_status(response, component_key)
+        # LinkedIn always sends UTF-8 JSON here but doesn't always declare a
+        # charset, so httpx falls back to auto-detection -- which guessed
+        # wrong on a real response (an en-dash and a curly apostrophe both
+        # came back mojibake'd). Force UTF-8 explicitly rather than guess.
+        response.encoding = "utf-8"
         return parse_flight_response(response.text)
 
     async def get_profile_view(self, public_id: str) -> dict:
@@ -182,6 +187,7 @@ class VoyagerClient:
         into a ProfileResponse."""
         page_response = await self._client.get(PROFILE_PAGE_URL.format(public_id=public_id))
         _raise_for_status(page_response, "profile page")
+        page_response.encoding = "utf-8"  # see the comment in _fetch_component
         meta = _parse_profile_header(page_response.text)
 
         about_chunks, about_aliases = await self._fetch_component("about", public_id)
