@@ -10,6 +10,8 @@ A small HTTPS API that takes a public LinkedIn profile URL and returns
 structured JSON: name, headline, location, about, experience, education,
 skills, certifications, languages, and profile images.
 
+![Demo: looking up a real profile through the homepage](docs/demo.gif)
+
 It works by calling **the same internal endpoints linkedin.com's own web
 front-end calls** when you open a profile page — directly, over HTTPS, with
 plain `httpx` requests. There is no browser automation anywhere in this
