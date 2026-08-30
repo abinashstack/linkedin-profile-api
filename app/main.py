@@ -1,11 +1,13 @@
 """
 FastAPI app exposing:
-- a browser UI (/) for pasting a session cookie + a profile URL/handle
-- GET  /v1/profile  -- uses the server's own configured LinkedIn session
-- POST /v1/profile  -- uses a session cookie supplied in the request body
+- a browser UI (/) for looking up a profile URL/handle
+- GET  /v1/profile          -- always uses the server's own configured session
+- POST /v1/profile          -- uses the server's session by default; an
+                               optional `li_at` in the body overrides it
+- POST /v1/profiles/batch   -- same, for several profiles in one call
 
-Both call LinkedIn's own Voyager API directly; nothing here renders a page
-or drives a browser.
+All three call LinkedIn's own Voyager API directly; nothing here renders a
+page or drives a browser.
 """
 from __future__ import annotations
 
@@ -103,16 +105,9 @@ async def _fetch_and_parse(client: VoyagerClient, public_id: str) -> ProfileResp
     return parse_profile(raw, public_id=public_id, profile_url=f"https://www.linkedin.com/in/{public_id}/")
 
 
-@app.get("/v1/profile", response_model=ProfileResponse)
-async def get_profile(
-    url: str = Query(..., description="A LinkedIn profile URL or handle, e.g. https://www.linkedin.com/in/someone/ or 'someone'")
-):
-    """Looks up a profile using the session configured on the server (LINKEDIN_LI_AT / login)."""
-    try:
-        public_id = extract_public_id(url)
-    except InvalidProfileURLError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
+async def _lookup_via_server_session(public_id: str) -> ProfileResponse:
+    """Looks up a profile using the session configured on the server
+    (LINKEDIN_LI_AT / login), with the response cache."""
     if app.state.client is None:
         raise HTTPException(status_code=500, detail=f"LinkedIn session unavailable: {app.state.auth_error}")
 
@@ -125,26 +120,43 @@ async def get_profile(
     return profile
 
 
+async def _lookup_via_cookie(public_id: str, li_at: str) -> ProfileResponse:
+    """Looks up a profile using a one-off session cookie. The cookie is used
+    only to build a throwaway client for this one request and is never
+    written to disk, logged, or cached -- only the parsed profile output is
+    cached (and only for the server-session path above)."""
+    client = VoyagerClient({"li_at": li_at, "JSESSIONID": make_jsessionid(li_at)})
+    try:
+        return await _fetch_and_parse(client, public_id)
+    finally:
+        await client.aclose()
+
+
+@app.get("/v1/profile", response_model=ProfileResponse)
+async def get_profile(
+    url: str = Query(..., description="A LinkedIn profile URL or handle, e.g. https://www.linkedin.com/in/someone/ or 'someone'")
+):
+    """Looks up a profile using the session configured on the server (LINKEDIN_LI_AT / login)."""
+    try:
+        public_id = extract_public_id(url)
+    except InvalidProfileURLError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return await _lookup_via_server_session(public_id)
+
+
 @app.post("/v1/profile", response_model=ProfileResponse)
 async def post_profile(payload: ProfileRequest):
-    """Looks up a profile using a session cookie supplied in the request body.
-
-    The cookie is used only to build a throwaway client for this one request
-    and is never written to disk, logged, or cached -- only the parsed
-    profile output is cached, keyed by public_id."""
+    """Looks up a profile. If `li_at` is supplied, uses it to build a one-off
+    session for this single request; otherwise falls back to the server's
+    configured session, same as GET /v1/profile (cache included)."""
     try:
         public_id = extract_public_id(payload.url)
     except InvalidProfileURLError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    if not payload.li_at:
-        raise HTTPException(status_code=400, detail="li_at is required for POST /v1/profile.")
-
-    client = VoyagerClient({"li_at": payload.li_at, "JSESSIONID": make_jsessionid(payload.li_at)})
-    try:
-        return await _fetch_and_parse(client, public_id)
-    finally:
-        await client.aclose()
+    if payload.li_at:
+        return await _lookup_via_cookie(public_id, payload.li_at)
+    return await _lookup_via_server_session(public_id)
 
 
 @app.post("/v1/profiles/batch", response_model=BatchProfileResponse)

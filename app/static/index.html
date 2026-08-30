@@ -74,19 +74,21 @@
   <p class="subtitle">Reverse-engineered against LinkedIn's own Voyager API. <a href="/docs">API docs</a></p>
 
   <div class="warning">
-    Your session cookie is sent directly to this server over HTTPS to make a single
-    lookup, then discarded — it is never written to a file, logged, or cached.
-    Even so, an <code>li_at</code> cookie grants full access to your LinkedIn
-    account, exactly like a password. Only paste one you're comfortable sharing
-    with this server, ideally from a throwaway account.
+    By default this uses the LinkedIn session already configured on the
+    server. If you paste a cookie below instead, it's sent directly to this
+    server over HTTPS for that one lookup and then discarded — never written
+    to a file, logged, or cached. Even so, an <code>li_at</code> cookie
+    grants full access to whatever LinkedIn account it belongs to, exactly
+    like a password — only paste one you're comfortable sharing with this
+    server.
   </div>
 
   <form id="lookup-form">
-    <label for="li_at">LinkedIn session cookie (li_at)</label>
-    <input id="li_at" type="password" placeholder="AQEDAxxxxxxxxxxxxxxxx..." required autocomplete="off" />
-
     <label for="target">Profile URL or username</label>
     <input id="target" type="text" placeholder="https://www.linkedin.com/in/satyanadella/  or just  satyanadella" required autocomplete="off" />
+
+    <label for="li_at">Session cookie override (optional)</label>
+    <input id="li_at" type="password" placeholder="Leave blank to use this server's own session" autocomplete="off" />
 
     <button type="submit" id="submit-btn">Look up</button>
   </form>

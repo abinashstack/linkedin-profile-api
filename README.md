@@ -178,17 +178,23 @@ you, but no code changes are needed to add one.
 
 ## Browser UI
 
-`GET /` serves a single-page form (`app/static/index.html`): paste a LinkedIn
-session cookie and a profile URL or bare handle (e.g. `satyanadella`), and it
-renders the parsed profile in the browser, with a "Raw JSON" toggle. It's a
-thin client over `POST /v1/profile` below — no separate backend.
+`GET /` serves a single-page form (`app/static/index.html`): enter a profile
+URL or bare handle (e.g. `satyanadella`) and it renders the parsed profile in
+the browser, with a "Raw JSON" toggle. It's a thin client over
+`POST /v1/profile` below — no separate backend.
 
-The cookie you paste there is used only in memory to build a one-off request
-to LinkedIn and is never written to disk, logged, or cached; only the parsed
-profile output is cached (see `POST /v1/profile`). That said, an `li_at`
-cookie grants full access to whatever LinkedIn account it belongs to, exactly
-like a password — the page says as much, and the same caution applies if you
-point other people at this UI.
+By default it looks up profiles using the session already configured on the
+server (`LINKEDIN_LI_AT`) — that's the point of setting that up: paste your
+own cookie once in the deploy environment, then look up any profile from the
+page without re-entering anything. There's also an optional "session cookie
+override" field for looking something up with a *different* LinkedIn
+session instead; if you use it, that cookie is used only in memory to build
+a one-off request and is never written to disk, logged, or cached (only the
+parsed profile output is cached, and only for the server-session path — see
+`POST /v1/profile`). An `li_at` cookie grants full access to whatever
+LinkedIn account it belongs to, exactly like a password, so the same caution
+applies if you ever point other people at this UI and let them use the
+override field with their own.
 
 ## API documentation
 
@@ -283,22 +289,23 @@ Every error response is `{"detail": "<human-readable message>"}`.
 
 ### `POST /v1/profile`
 
-Same result shape as `GET /v1/profile`, but authenticates with a session
-cookie supplied in the request body instead of the server's configured one —
-this is what the browser UI (`/`) calls. Useful for letting someone else use
-this API with their own LinkedIn session rather than yours.
+Same result shape as `GET /v1/profile`. `li_at` is optional: omit it (or send
+an empty string) and this behaves exactly like `GET /v1/profile`, cache
+included. Supply it and this behaves like `GET`'s per-request cousin,
+authenticating with that cookie instead — useful for letting someone else
+use this API with their own LinkedIn session rather than yours. This is what
+the browser UI (`/`) calls either way.
 
 **Request**
 
 ```json
-{ "url": "https://www.linkedin.com/in/some-person/", "li_at": "<their li_at cookie>" }
+{ "url": "https://www.linkedin.com/in/some-person/", "li_at": "<optional override cookie>" }
 ```
 
 `url` also accepts a bare handle (`"some-person"`) instead of a full URL —
-`GET /v1/profile` accepts the same. `li_at` is required; a missing or invalid
-value returns `400` / `401` respectively. The cookie is used to build a
-one-off client for this single request only — it is not cached, logged, or
-reused for later requests.
+`GET /v1/profile` accepts the same. When `li_at` is supplied, it's used to
+build a one-off client for this single request only — it is not cached,
+logged, or reused for later requests.
 
 ### `POST /v1/profiles/batch`
 
