@@ -259,6 +259,18 @@ weeks to a year; when LinkedIn eventually invalidates it (the API will
 start returning 401s), just repeat the steps above and update the
 environment variable.
 
+**Closing the browser, the tab, or your computer does not invalidate
+it.** The copied value is a static string LinkedIn's servers recognize —
+it isn't tied to that browser session staying open. What actually
+invalidates it: explicitly logging out of that account in a browser
+(server-side, not just local), the cookie's natural expiration, or
+LinkedIn's own security systems flagging it (a password change, "log out
+of all devices," or — relevant here specifically — the automated,
+non-browser traffic pattern this app produces looking nothing like normal
+browsing; see [Known limitations](#known-limitations)). Don't log out of
+the account you're using for this while you want the deployed cookie to
+keep working, and expect it to need refreshing eventually regardless.
+
 ### Option B — `LINKEDIN_EMAIL` / `LINKEDIN_PASSWORD`
 
 If `LINKEDIN_LI_AT` isn't set, the backend will instead try to log in on
