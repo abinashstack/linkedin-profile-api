@@ -300,6 +300,46 @@ value returns `400` / `401` respectively. The cookie is used to build a
 one-off client for this single request only — it is not cached, logged, or
 reused for later requests.
 
+### `POST /v1/profiles/batch`
+
+Looks up several profiles in one call, using one session for all of them.
+
+**Request**
+
+```json
+{ "urls": ["satyanadella", "https://www.linkedin.com/in/some-person/"], "li_at": "<optional override>" }
+```
+
+`li_at` is optional here — omit it to use the server's configured session,
+same as `GET /v1/profile`. Up to `BATCH_MAX_SIZE` URLs per call (default 20;
+`400` above that).
+
+**Response — `200 OK`**
+
+```json
+{
+  "results": [
+    { "url": "satyanadella", "ok": true, "profile": { "...": "..." }, "error": null },
+    { "url": "https://www.linkedin.com/in/some-person/", "ok": false, "profile": null, "error": "No profile found for 'some-person' (or it's private)." }
+  ]
+}
+```
+
+The response is always `200` even if individual profiles failed — check
+each result's `ok` field. Requests are made **one at a time with a short
+delay in between** (`BATCH_DELAY_SECONDS`, default 1.5s), not in parallel: a
+burst of simultaneous requests is a far stronger signal to LinkedIn's abuse
+detection than the same requests spread out. If LinkedIn responds with a
+challenge, a rate limit, or an expired session partway through the batch,
+the whole batch **stops immediately** — every remaining URL comes back with
+`ok: false` and an error explaining it was skipped, rather than also being
+attempted against a session that's clearly already being flagged.
+
+This is still a single, synchronous HTTP request under the hood, so very
+large batches can run into the host's own request timeout — that's a
+reason to keep `BATCH_MAX_SIZE` conservative rather than raise it, not a bug
+to work around.
+
 Full interactive documentation (OpenAPI/Swagger) is served at `/docs` on
 any running instance.
 

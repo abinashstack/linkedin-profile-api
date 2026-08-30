@@ -66,3 +66,19 @@ class ProfileResponse(BaseModel):
     skills: list[str] = Field(default_factory=list)
     certifications: list[Certification] = Field(default_factory=list)
     languages: list[Language] = Field(default_factory=list)
+
+
+class BatchProfileRequest(BaseModel):
+    urls: list[str]  # each a full profile URL or a bare handle
+    li_at: Optional[str] = None  # per-request session cookie override; used only in-memory
+
+
+class BatchProfileResult(BaseModel):
+    url: str
+    ok: bool
+    profile: Optional[ProfileResponse] = None
+    error: Optional[str] = None
+
+
+class BatchProfileResponse(BaseModel):
+    results: list[BatchProfileResult]
