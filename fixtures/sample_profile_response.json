@@ -1,9 +1,9 @@
 {
   "meta": {
-    "title": "Jane Doe - Senior Software Engineer at Example Corp | LinkedIn",
-    "og_title": "Jane Doe - Senior Software Engineer at Example Corp | LinkedIn",
-    "og_description": "San Francisco, California, United States · 500+ connections",
-    "og_image": "https://media.licdn.com/dms/image/abc/400_400.jpg"
+    "name": "Jane Doe",
+    "headline": "Senior Software Engineer at Example Corp",
+    "location": null,
+    "photo": "https://media.licdn.com/dms/image/abc/400_400.jpg"
   },
   "about": "Backend engineer focused on distributed systems.",
   "experience": [
@@ -24,8 +24,8 @@
   ],
   "education": [
     {
-      "title": "B.S., Computer Science",
-      "subtitle": "State University",
+      "title": "State University",
+      "subtitle": "B.S., Computer Science",
       "dates": "2014 - 2018",
       "location": null,
       "description": null

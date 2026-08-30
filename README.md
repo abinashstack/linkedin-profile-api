@@ -53,14 +53,19 @@ take-home assignment as a demonstration of API reverse-engineering.
    sends as `vanityName` (see step 4), so no extra ID-resolution call is
    needed.
 3. **Fetch the basics from the page's own HTML.** `GET /in/<public-id>/` is
-   requested like a browser would, and `name`/`headline`/`location`/
-   `profile_picture` are read from that page's standard `<title>` and Open
-   Graph meta tags (`og:title`, `og:description`, `og:image`) — the same
-   tags any page exposes for link-preview cards on other sites. This is a
-   deliberately different, more boring target than the SDUI system in step
-   4: meta tags are conventional HTML, essentially the most stable part of
-   any page, and sidestep the whole component-tree problem for exactly the
-   fields simple enough not to need it.
+   requested like a browser would. The original plan was Open Graph meta
+   tags (`og:title`, `og:description`, `og:image`) — confirmed live to not
+   exist at all on an authenticated page load (LinkedIn only serves them
+   logged-out, for link-preview purposes; this client is always
+   authenticated). What actually works, verified against two different
+   real profiles: `name` comes from `<title>`, which is just `"<Name> |
+   LinkedIn"`; `headline` is plain server-rendered HTML immediately
+   after — a bare `<span>` with no distinct className, found by searching
+   just past the name's own text. `location` and `profile_picture` aren't
+   resolved yet at all; see [Known limitations](#known-limitations). The
+   Open Graph tags are still checked as a fallback in case a particular
+   page state ever does serve them, but they're not the primary path
+   anymore.
 4. **Fetch the deep sections via LinkedIn's UI-rendering endpoint.** About,
    Experience, Education, and Skills each come from a separate
    `POST /flagship-web/rsc-action/actions/component` call (`componentId` =
@@ -108,7 +113,7 @@ flowchart TD
     Backend --> PID["extract_public_id()\nURL or bare handle -> public_id"]
 
     PID --> HTML["GET linkedin.com/in/&lt;public_id&gt;/\n(plain HTML page)"]
-    HTML --> Meta["Read &lt;title&gt; / og:title /\nog:description / og:image"]
+    HTML --> Meta["Read &lt;title&gt; for name,\nnearby &lt;span&gt; for headline"]
     Meta --> Basic["name, headline,\nlocation, photo"]
 
     PID --> C1["POST .../actions/component\ncomponentId = aboutTopLevelSection"]
@@ -203,6 +208,25 @@ again, and partly because "it just worked" would be a lie.
    easy to have never noticed, since the corruption looked like "the
    parser is slightly wrong" rather than "the test is reading the file
    wrong."
+9. **The first real end-to-end lookup immediately found two more bugs.**
+   Everything above was verified piece by piece — real captured responses,
+   synthetic fixtures modeled on them, individual components confirmed
+   live — but the assembled pipeline had never actually run against a real
+   account until `GET /v1/profile?url=satyanadella` was tried against the
+   deployed service. It worked (real name, real about text, five correctly
+   parsed real experience entries) and also immediately surfaced: education
+   fields swapped (LinkedIn puts the school name where Experience puts a
+   job title, and the code had assumed they matched), and
+   name/headline/location/photo all coming back `null` because the Open
+   Graph tags they depended on turned out not to exist at all on an
+   authenticated page load — confirmed by checking two different real
+   profiles' raw HTML directly, which is also how the actual mechanism
+   (`<title>` for name, a bare `<span>` right after it for headline) got
+   found and confirmed. Location and photo are still unresolved; see Known
+   Limitations. This is the clearest illustration in the whole project of
+   why "verified against a real account" and "verified against fixtures
+   modeling what a real account should look like" are different claims —
+   the second one missed both of these.
 
 None of this was available as a single write-up anywhere at the time of
 building it — every step past #2 came from watching real traffic and
@@ -524,19 +548,20 @@ any running instance.
 
 ## Known limitations
 
-- **The individual pieces are verified against real LinkedIn traffic; the
-  full pipeline as committed here is not.** The HTTP calls in
-  `voyager_client.py` (the HTML page fetch and all four component POSTs)
-  were confirmed live, getting real `200` responses with real data back —
-  and `sdui_parser.py`'s extraction logic was verified against real
-  captured `experienceTopLevelSection` and `skillsTopLevelSection`
-  responses and matches both correctly. What hasn't been run end-to-end in
-  this repo is the whole pipeline
-  wired together against a live account (the synthetic fixtures in
-  `tests/` model the real shape but aren't the real response). Run it
-  against your own account and a few real profiles before trusting it
-  further, and expect to adjust `app/parser.py`'s meta-tag assumptions in
-  particular if they don't match.
+- **The full pipeline has now been run end-to-end against a live account,
+  successfully** — `GET /v1/profile?url=satyanadella` against the deployed
+  service returned real name, real about text, and five real, correctly
+  parsed experience entries. That one run also caught two real bugs
+  (education's degree/school were swapped; name/headline/location/photo
+  relied on Open Graph tags that turned out not to exist once
+  authenticated), both since fixed and covered by tests — see the
+  Education and Name/headline/location entries below, and ["The debugging
+  journey"](#the-debugging-journey). That's one profile, though, not
+  broad coverage: education was corrected but not re-verified against a
+  second real education-bearing profile the way name/headline was, and
+  certifications/languages/location/photo are still open. Treat this as
+  "verified more than a synthetic-fixtures-only project" rather than
+  "fully proven," and keep testing it against real profiles as you use it.
 - **LinkedIn's rendering system is undocumented, changes without notice,
   and already changed once during this project.** The original REST
   endpoint this was built against (`/voyager/api/identity/profiles/.../profileView`)
@@ -599,14 +624,28 @@ any running instance.
   resolves every element to its module hash first (see the module
   docstring), which is what actually made Skills extraction possible —
   and fixed a latent bug in the Experience/Education parsing too.
-- **Name/headline/location come from Open Graph meta tags, not the SDUI
-  system** — a deliberate, more stable choice (see "How it works"), but the
-  exact tag format assumed in `app/voyager_client.py`/`parser.py`
-  (`"<Name> - <Headline> | LinkedIn"` for the title, location leading
-  `og:description` before a `·`) is standard practice, not something
-  independently re-verified against a live capture in this project's own
-  testing. If LinkedIn's actual tags differ, name/headline/location parsing
-  will need adjusting the same way the rest of this did.
+- **Name and headline are verified against two live profiles; location and
+  photo are not resolved at all.** The original plan was Open Graph meta
+  tags for all four fields — checked live and confirmed they don't exist
+  once authenticated, so that plan was wrong, not just unverified. What
+  replaced it (name from `<title>`, headline from a bare `<span>` right
+  after the name in server-rendered HTML) was confirmed correct against
+  two different real profiles' live responses. Location and
+  `profile_picture` still return `null` — nothing was found that reliably
+  carries them on an authenticated page load; the `<figure>` where a photo
+  would be renders as an empty placeholder with `aria-hidden="true"`,
+  meaning it's filled in by something not yet identified. If you find
+  where these live, the fix follows the same pattern as name/headline: an
+  anchor in `voyager_client.py`, verified against a real response before
+  trusting it.
+- **Education's degree/school mapping was found backwards on the first
+  real test and corrected.** LinkedIn renders the *school name* as an
+  education entry's bold "title" and the *degree* as its "subtitle" — the
+  reverse of Experience, where title=role and subtitle=company. The
+  original code assumed the Experience pattern applied uniformly and
+  swapped the two; a real lookup surfaced it immediately (a well-known
+  school name showing up in the `degree` field). Now correct and covered
+  by a test that would catch a regression.
 - **Five requests per profile lookup, not one.** The HTML page plus four
   SDUI component calls (about/experience/education/skills) all happen
   sequentially for a single `GET /v1/profile` call —

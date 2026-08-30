@@ -48,10 +48,16 @@ def test_parse_profile_basic_fields():
     profile = _parse()
     assert profile.name == "Jane Doe"
     assert profile.headline == "Senior Software Engineer at Example Corp"
-    assert profile.location == "San Francisco, California, United States"
     assert profile.about == "Backend engineer focused on distributed systems."
     assert profile.profile_picture is not None
     assert profile.profile_picture.url == "https://media.licdn.com/dms/image/abc/400_400.jpg"
+
+
+def test_parse_profile_location_is_not_resolved_yet():
+    # Not implemented yet -- voyager_client.py hasn't found where location
+    # lives on an authenticated page load. Always None, not a guess.
+    # See README "Known limitations".
+    assert _parse().location is None
 
 
 def test_parse_profile_experience():
@@ -67,10 +73,13 @@ def test_parse_profile_experience():
 
 
 def test_parse_profile_education():
+    # School is the entry's "title" (bold, first) and degree is its
+    # "subtitle" -- the reverse of Experience's title=role/subtitle=company.
+    # Confirmed against a real response (a mismatched pairing surfaced this).
     profile = _parse()
     assert len(profile.education) == 1
-    assert profile.education[0].degree == "B.S., Computer Science"
     assert profile.education[0].school == "State University"
+    assert profile.education[0].degree == "B.S., Computer Science"
     assert profile.education[0].date_range == "2014 - 2018"
 
 
@@ -87,16 +96,16 @@ def test_parse_profile_certs_and_languages_are_empty():
     assert profile.languages == []
 
 
-def test_parse_profile_missing_og_image_gives_no_photo():
+def test_parse_profile_missing_photo_gives_no_picture():
     fixture = json.loads(json.dumps(FIXTURE))
-    fixture["meta"]["og_image"] = None
+    fixture["meta"]["photo"] = None
     profile = parse_profile(fixture, public_id="jane-doe", profile_url=PROFILE_URL)
     assert profile.profile_picture is None
 
 
-def test_parse_profile_title_without_dash_has_no_headline():
+def test_parse_profile_missing_headline():
     fixture = json.loads(json.dumps(FIXTURE))
-    fixture["meta"]["og_title"] = "Jane Doe | LinkedIn"
+    fixture["meta"]["headline"] = None
     profile = parse_profile(fixture, public_id="jane-doe", profile_url=PROFILE_URL)
     assert profile.name == "Jane Doe"
     assert profile.headline is None
