@@ -1,5 +1,11 @@
 # LinkedIn Profile API
 
+**Live deployment:** https://linkedin-profile-api-dwzr.onrender.com
+([`/health`](https://linkedin-profile-api-dwzr.onrender.com/health),
+[`/docs`](https://linkedin-profile-api-dwzr.onrender.com/docs)) — hosted on
+Render's free tier, so the first request after a period of inactivity can
+take ~30-60s while the instance spins back up.
+
 A small HTTPS API that takes a public LinkedIn profile URL and returns
 structured JSON: name, headline, location, about, experience, education,
 skills, certifications, languages, and profile images.
