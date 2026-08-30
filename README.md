@@ -100,6 +100,86 @@ documents the classic REST flow. Neither describes the SDUI system in step
 because the endpoint they document (`/voyager/api/identity/profiles/.../profileView`)
 is the one now returning `410 Gone`.
 
+## The debugging journey
+
+The "How it works" section above describes the system as it ended up. It
+didn't start there, and the path to it is worth recording honestly —
+partly because some of the wrong turns are useful context if this breaks
+again, and partly because "it just worked" would be a lie.
+
+1. **Built against the documented approach first.** The classic,
+   well-documented Voyager REST flow — `GET
+   /voyager/api/identity/profiles/<id>/profileView` with an `li_at`
+   cookie and `accept: application/vnd.linkedin.normalized+json+2.1` — is
+   what every community write-up and the original `linkedin-api` library
+   describe. Built the parser against that shape, wrote tests, deployed.
+2. **It returned `410 Gone` against a real account.** Not `404` (missing
+   profile) — `410` (this representation is gone). First hypothesis: the
+   specific `accept` header was the retired thing, not the endpoint
+   itself, based on reading a community fork's source
+   ([`open-linkedin-api`](https://github.com/EseToni/open-linkedin-api))
+   that used the same URL without that header. Dropped the header,
+   rewrote the parser for its (different) default response shape,
+   redeployed.
+3. **Still `410`, immediately.** That disproved the header theory —
+   confirmed the whole endpoint is gone, not just one representation of
+   it. At this point the only way forward was watching what LinkedIn's
+   own web app actually does, live, since nothing written about this
+   endpoint's replacement was findable by searching.
+4. **Traced it with a real browser (Claude in Chrome) and DevTools network
+   capture.** First finding: LinkedIn now calls a GraphQL query,
+   `voyagerIdentityDashProfiles`. Implemented against it — and it turned
+   out to describe the *viewer*, not the profile being looked at (the
+   `memberIdentity` value was identical across two completely different
+   profiles' page loads). Dead end.
+5. **Kept tracing and found the real mechanism**: `POST
+   /flagship-web/rsc-action/actions/component`, a React Server Components
+   ("Flight" protocol) UI-rendering action — not a REST endpoint, not
+   GraphQL, a serialized component tree. This needed the actual
+   `componentId` for each section, which took another round of capturing
+   real page loads to enumerate (`aboutTopLevelSection`,
+   `experienceTopLevelSection`, `educationTopLevelSection`,
+   `skillsTopLevelSection`, and a set of generically-numbered
+   `profileCardsBelowActivityPartN` components that never resolved to a
+   stable mapping — see certifications/languages in Known Limitations).
+6. **Automated capture kept breaking in ways worth naming.** LinkedIn's
+   own client hit real React hydration crashes in an automated browser
+   session (independent of anything this project did). A JavaScript
+   `fetch`/`XMLHttpRequest` interceptor installed to snoop on the page's
+   own requests broke the page's own network calls outright and had to be
+   abandoned in favor of just replaying requests directly. The Chrome
+   extension bridge disconnected mid-session and needed reinstalling.
+   Eventually, further automated extraction from a real profile got
+   capped by this environment's own safety classifier — at that point the
+   only way to keep going was asking for one specific response to be
+   captured by hand, via the browser's own DevTools Console, and pasted
+   in.
+7. **Found and fixed a subtler bug along the way**: a `"$L20"`-style
+   element reference in this protocol is a *per-response* alias into a
+   module table declared at the top of that response, not a stable ID —
+   confirmed by comparing two real captured responses, where the identical
+   generic Text component was aliased `$L20` in one and `$Ld` in the
+   other. The parser originally matched on the literal alias string,
+   which only worked by coincidence for the one response it was written
+   against, and would have silently broken on real Experience/Education
+   responses from other profiles, not just on Skills (which is what
+   surfaced it). Fixed by resolving every element to its module hash
+   before matching — see `app/sdui_parser.py`'s module docstring.
+8. **A basic tooling bug hid inside all of this too**: `Path.read_text()`
+   without an explicit `encoding="utf-8"` silently uses the Windows
+   system codepage, which mis-decoded a middle-dot separator character in
+   every fixture-reading test on this development machine. Cheap to fix,
+   easy to have never noticed, since the corruption looked like "the
+   parser is slightly wrong" rather than "the test is reading the file
+   wrong."
+
+None of this was available as a single write-up anywhere at the time of
+building it — every step past #2 came from watching real traffic and
+reasoning about what changed, not from finding someone else's already-solved
+version. That's also exactly why the "Known limitations" section below is
+long and specific rather than a generic disclaimer: each item there is
+something this process actually ran into, not a hedge.
+
 ## Project layout
 
 ```
@@ -245,6 +325,13 @@ parsed profile output is cached, and only for the server-session path — see
 LinkedIn account it belongs to, exactly like a password, so the same caution
 applies if you ever point other people at this UI and let them use the
 override field with their own.
+
+The page checks `GET /health` on load and tells you plainly which case
+you're in, instead of leaving the cookie field's "(optional)" label to
+imply something that might not be true yet: if no server session is
+configured, it shows a visible warning and relabels the field as required
+(with the browser's own form validation enforcing it), rather than letting
+you submit a lookup that's guaranteed to fail with a vague error.
 
 ## API documentation
 

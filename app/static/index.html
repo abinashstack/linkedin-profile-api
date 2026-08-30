@@ -228,6 +228,8 @@
     password — only paste one you're comfortable sharing with this server.
   </div>
 
+  <div id="session-status" class="warning" style="display:none;"></div>
+
   <form id="lookup-form">
     <label for="targets">Profile URLs or usernames (one per line)</label>
     <textarea id="targets" rows="5" required autocomplete="off" placeholder="https://www.linkedin.com/in/satyanadella/
@@ -235,7 +237,7 @@ jeffweiner08
 some-other-handle"></textarea>
     <p class="hint">Looked up one at a time with a short delay between each, not all at once. A large batch may be rejected — split it into smaller requests if so.</p>
 
-    <label for="li_at">Session cookie override (optional)</label>
+    <label for="li_at" id="li_at-label">Session cookie override (optional)</label>
     <input id="li_at" type="password" placeholder="Leave blank to use this server's own session" autocomplete="off" />
 
     <button type="submit" id="submit-btn">Look up</button>
@@ -249,6 +251,33 @@ some-other-handle"></textarea>
     const statusEl = document.getElementById("status");
     const resultEl = document.getElementById("result");
     const submitBtn = document.getElementById("submit-btn");
+    const sessionStatusEl = document.getElementById("session-status");
+    const liAtLabelEl = document.getElementById("li_at-label");
+    const liAtInputEl = document.getElementById("li_at");
+
+    // The cookie field is only *actually* optional if the server has its
+    // own session configured (LINKEDIN_LI_AT). Rather than leave that as a
+    // silent assumption the label makes and reality might not back up,
+    // check /health on load and say plainly which case you're in.
+    (async () => {
+      try {
+        const res = await fetch("/health");
+        const data = await res.json();
+        if (!data.authenticated) {
+          sessionStatusEl.style.display = "block";
+          sessionStatusEl.innerHTML =
+            "⚠️ <strong>No LinkedIn session is configured on this server right now</strong> " +
+            "(<code>LINKEDIN_LI_AT</code> isn't set, or it's expired) — leaving the cookie field " +
+            "below blank will fail. Until that's set, you must paste your own <code>li_at</code> " +
+            "cookie for every lookup.";
+          liAtLabelEl.textContent = "Session cookie (required — no server session configured)";
+          liAtInputEl.placeholder = "Paste your li_at cookie — required right now, see warning above";
+          liAtInputEl.required = true;
+        }
+      } catch (err) {
+        // Network hiccup checking /health shouldn't block using the form.
+      }
+    })();
 
     function esc(s) {
       return (s ?? "").toString().replace(/[&<>"']/g, c => ({
