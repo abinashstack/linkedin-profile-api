@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LinkedIn Profile Lookup</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    max-width: 720px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  .subtitle { color: #666; margin-top: 0; margin-bottom: 1.5rem; }
+  .warning {
+    background: #fff7e6;
+    border: 1px solid #f0c36d;
+    color: #7a5b00;
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    font-size: 0.9rem;
+    margin-bottom: 1.5rem;
+  }
+  form { display: flex; flex-direction: column; gap: 0.75rem; }
+  label { font-size: 0.85rem; font-weight: 600; }
+  input {
+    padding: 0.5rem 0.6rem;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+  }
+  button {
+    padding: 0.6rem 1rem;
+    font-size: 1rem;
+    border: none;
+    border-radius: 6px;
+    background: #0a66c2;
+    color: white;
+    cursor: pointer;
+    align-self: flex-start;
+  }
+  button:disabled { opacity: 0.6; cursor: default; }
+  #status { margin-top: 1rem; font-size: 0.9rem; }
+  #status.error { color: #b00020; }
+  #result { margin-top: 1.5rem; }
+  .card { display: flex; gap: 1rem; align-items: flex-start; margin-bottom: 1rem; }
+  .card img { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; background: #eee; }
+  .card h2 { margin: 0; font-size: 1.2rem; }
+  .card .headline { color: #444; }
+  .card .location { color: #777; font-size: 0.9rem; }
+  section { margin-bottom: 1.25rem; }
+  section h3 { font-size: 1rem; border-bottom: 1px solid #ddd; padding-bottom: 0.25rem; }
+  .entry { margin-bottom: 0.75rem; }
+  .entry .title { font-weight: 600; }
+  .entry .sub { color: #555; font-size: 0.9rem; }
+  .entry .dates { color: #888; font-size: 0.85rem; }
+  .skills span {
+    display: inline-block;
+    background: #eef3f8;
+    border-radius: 999px;
+    padding: 0.2rem 0.7rem;
+    margin: 0 0.35rem 0.35rem 0;
+    font-size: 0.85rem;
+  }
+  details { margin-top: 1.5rem; }
+  pre { white-space: pre-wrap; word-break: break-word; background: #f6f6f6; padding: 0.75rem; border-radius: 6px; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+  <h1>LinkedIn Profile Lookup</h1>
+  <p class="subtitle">Reverse-engineered against LinkedIn's own Voyager API. <a href="/docs">API docs</a></p>
+
+  <div class="warning">
+    Your session cookie is sent directly to this server over HTTPS to make a single
+    lookup, then discarded — it is never written to a file, logged, or cached.
+    Even so, an <code>li_at</code> cookie grants full access to your LinkedIn
+    account, exactly like a password. Only paste one you're comfortable sharing
+    with this server, ideally from a throwaway account.
+  </div>
+
+  <form id="lookup-form">
+    <label for="li_at">LinkedIn session cookie (li_at)</label>
+    <input id="li_at" type="password" placeholder="AQEDAxxxxxxxxxxxxxxxx..." required autocomplete="off" />
+
+    <label for="target">Profile URL or username</label>
+    <input id="target" type="text" placeholder="https://www.linkedin.com/in/satyanadella/  or just  satyanadella" required autocomplete="off" />
+
+    <button type="submit" id="submit-btn">Look up</button>
+  </form>
+
+  <div id="status"></div>
+  <div id="result"></div>
+
+  <script>
+    const form = document.getElementById("lookup-form");
+    const statusEl = document.getElementById("status");
+    const resultEl = document.getElementById("result");
+    const submitBtn = document.getElementById("submit-btn");
+
+    function esc(s) {
+      return (s ?? "").toString().replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    function dateRange(a, b) {
+      if (!a && !b) return "";
+      return `${esc(a || "?")} – ${esc(b || "Present")}`;
+    }
+
+    function render(p) {
+      let html = `<div class="card">`;
+      if (p.profile_picture && p.profile_picture.url) {
+        html += `<img src="${esc(p.profile_picture.url)}" alt="" />`;
+      }
+      html += `<div>
+        <h2>${esc(p.name) || "(no name found)"}</h2>
+        <div class="headline">${esc(p.headline)}</div>
+        <div class="location">${esc(p.location)}</div>
+      </div></div>`;
+
+      if (p.about) {
+        html += `<section><h3>About</h3><p>${esc(p.about)}</p></section>`;
+      }
+
+      if (p.experience && p.experience.length) {
+        html += `<section><h3>Experience</h3>`;
+        for (const e of p.experience) {
+          html += `<div class="entry">
+            <div class="title">${esc(e.title)}${e.company ? " · " + esc(e.company) : ""}</div>
+            <div class="sub">${esc(e.location) || ""}</div>
+            <div class="dates">${dateRange(e.starts_at, e.ends_at)}</div>
+            ${e.description ? `<div>${esc(e.description)}</div>` : ""}
+          </div>`;
+        }
+        html += `</section>`;
+      }
+
+      if (p.education && p.education.length) {
+        html += `<section><h3>Education</h3>`;
+        for (const e of p.education) {
+          html += `<div class="entry">
+            <div class="title">${esc(e.school)}</div>
+            <div class="sub">${[e.degree, e.field_of_study].filter(Boolean).map(esc).join(", ")}</div>
+            <div class="dates">${dateRange(e.starts_at, e.ends_at)}</div>
+          </div>`;
+        }
+        html += `</section>`;
+      }
+
+      if (p.skills && p.skills.length) {
+        html += `<section><h3>Skills</h3><div class="skills">${p.skills.map(s => `<span>${esc(s)}</span>`).join("")}</div></section>`;
+      }
+
+      if (p.certifications && p.certifications.length) {
+        html += `<section><h3>Certifications</h3>`;
+        for (const c of p.certifications) {
+          html += `<div class="entry">
+            <div class="title">${esc(c.name)}</div>
+            <div class="sub">${esc(c.authority)}</div>
+            <div class="dates">${dateRange(c.starts_at, c.ends_at)}</div>
+          </div>`;
+        }
+        html += `</section>`;
+      }
+
+      if (p.languages && p.languages.length) {
+        html += `<section><h3>Languages</h3>`;
+        for (const l of p.languages) {
+          html += `<div class="entry"><span class="title">${esc(l.name)}</span> <span class="sub">${esc(l.proficiency)}</span></div>`;
+        }
+        html += `</section>`;
+      }
+
+      html += `<details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(p, null, 2))}</pre></details>`;
+      resultEl.innerHTML = html;
+    }
+
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      statusEl.className = "";
+      statusEl.textContent = "Looking up…";
+      resultEl.innerHTML = "";
+      submitBtn.disabled = true;
+
+      const li_at = document.getElementById("li_at").value.trim();
+      const target = document.getElementById("target").value.trim();
+
+      try {
+        const res = await fetch("/v1/profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: target, li_at }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          statusEl.className = "error";
+          statusEl.textContent = data.detail || `Request failed (HTTP ${res.status})`;
+          return;
+        }
+        statusEl.textContent = "";
+        render(data);
+      } catch (err) {
+        statusEl.className = "error";
+        statusEl.textContent = "Network error: " + err.message;
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

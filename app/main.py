@@ -1,15 +1,22 @@
 """
-FastAPI app exposing a single endpoint that turns a LinkedIn profile URL
-into structured JSON, by calling LinkedIn's own Voyager API directly.
+FastAPI app exposing:
+- a browser UI (/) for pasting a session cookie + a profile URL/handle
+- GET  /v1/profile  -- uses the server's own configured LinkedIn session
+- POST /v1/profile  -- uses a session cookie supplied in the request body
+
+Both call LinkedIn's own Voyager API directly; nothing here renders a page
+or drives a browser.
 """
 from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
 
-from app.auth import get_session_cookies
+from app.auth import get_session_cookies, make_jsessionid
 from app.config import settings
 from app.exceptions import (
     AuthenticationError,
@@ -21,11 +28,12 @@ from app.exceptions import (
     SessionExpiredError,
     UpstreamError,
 )
-from app.models import ProfileResponse
+from app.models import ProfileRequest, ProfileResponse
 from app.parser import extract_public_id, parse_profile
 from app.voyager_client import VoyagerClient
 
 _cache: dict[str, tuple[float, ProfileResponse]] = {}
+_STATIC_DIR = Path(__file__).parent / "static"
 
 _ERROR_STATUS = {
     InvalidProfileURLError: 400,
@@ -65,15 +73,29 @@ app = FastAPI(
 )
 
 
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    return (_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "authenticated": app.state.client is not None}
 
 
+async def _fetch_and_parse(client: VoyagerClient, public_id: str) -> ProfileResponse:
+    try:
+        raw = await client.get_profile_view(public_id)
+    except LinkedInAPIError as exc:
+        raise HTTPException(status_code=_ERROR_STATUS.get(type(exc), 502), detail=str(exc))
+    return parse_profile(raw, public_id=public_id, profile_url=f"https://www.linkedin.com/in/{public_id}/")
+
+
 @app.get("/v1/profile", response_model=ProfileResponse)
 async def get_profile(
-    url: str = Query(..., description="A LinkedIn profile URL, e.g. https://www.linkedin.com/in/someone/")
+    url: str = Query(..., description="A LinkedIn profile URL or handle, e.g. https://www.linkedin.com/in/someone/ or 'someone'")
 ):
+    """Looks up a profile using the session configured on the server (LINKEDIN_LI_AT / login)."""
     try:
         public_id = extract_public_id(url)
     except InvalidProfileURLError as exc:
@@ -86,12 +108,28 @@ async def get_profile(
     if cached and (time.time() - cached[0]) < settings.cache_ttl_seconds:
         return cached[1]
 
-    try:
-        raw = await app.state.client.get_profile_view(public_id)
-        profile = parse_profile(raw, public_id=public_id, profile_url=url)
-    except LinkedInAPIError as exc:
-        status_code = _ERROR_STATUS.get(type(exc), 502)
-        raise HTTPException(status_code=status_code, detail=str(exc))
-
+    profile = await _fetch_and_parse(app.state.client, public_id)
     _cache[public_id] = (time.time(), profile)
     return profile
+
+
+@app.post("/v1/profile", response_model=ProfileResponse)
+async def post_profile(payload: ProfileRequest):
+    """Looks up a profile using a session cookie supplied in the request body.
+
+    The cookie is used only to build a throwaway client for this one request
+    and is never written to disk, logged, or cached -- only the parsed
+    profile output is cached, keyed by public_id."""
+    try:
+        public_id = extract_public_id(payload.url)
+    except InvalidProfileURLError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not payload.li_at:
+        raise HTTPException(status_code=400, detail="li_at is required for POST /v1/profile.")
+
+    client = VoyagerClient({"li_at": payload.li_at, "JSESSIONID": make_jsessionid(payload.li_at)})
+    try:
+        return await _fetch_and_parse(client, public_id)
+    finally:
+        await client.aclose()

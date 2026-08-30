@@ -29,16 +29,27 @@ from app.models import (
 _PROFILE_PATH_RE = re.compile(r"^/in/([^/?#]+)/?$")
 
 
-def extract_public_id(url: str) -> str:
-    """Pull the vanity public identifier out of a linkedin.com/in/<id> URL."""
-    parsed = urlparse(url.strip())
+def extract_public_id(value: str) -> str:
+    """Pull the vanity public identifier out of either a linkedin.com/in/<id>
+    URL or a bare handle (e.g. "satyanadella")."""
+    value = value.strip()
+
+    if not re.match(r"^https?://", value, re.IGNORECASE):
+        handle = value.strip("/ ").removeprefix("in/").lstrip("@")
+        if not handle or "/" in handle or " " in handle:
+            raise InvalidProfileURLError(
+                f"'{value}' doesn't look like a LinkedIn profile URL or handle."
+            )
+        return handle
+
+    parsed = urlparse(value)
     host = (parsed.netloc or "").lower()
     if not host.endswith("linkedin.com"):
-        raise InvalidProfileURLError(f"Not a linkedin.com URL: {url!r}")
+        raise InvalidProfileURLError(f"Not a linkedin.com URL: {value!r}")
     match = _PROFILE_PATH_RE.match(parsed.path)
     if not match:
         raise InvalidProfileURLError(
-            f"Expected a profile URL like https://www.linkedin.com/in/<id>/, got: {url!r}"
+            f"Expected a profile URL like https://www.linkedin.com/in/<id>/, got: {value!r}"
         )
     return match.group(1)
 

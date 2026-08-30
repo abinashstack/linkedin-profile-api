@@ -39,7 +39,7 @@ USER_AGENT = (
 _CSRF_RE = re.compile(r'name="loginCsrfParam"\s+value="([^"]*)"')
 
 
-def _make_jsessionid(seed: str) -> str:
+def make_jsessionid(seed: str) -> str:
     """Voyager accepts any JSESSIONID as long as it matches the csrf-token header
     sent with each request; it does not have to come from LinkedIn's server. We
     derive one deterministically from the li_at value so it's stable across
@@ -101,14 +101,14 @@ def _login_with_credentials(email: str, password: str) -> dict[str, str]:
                 )
             raise AuthenticationError(f"Login did not return a session cookie (ended at {response.url}).")
 
-        cookies = {"li_at": li_at, "JSESSIONID": jsessionid or _make_jsessionid(li_at)}
+        cookies = {"li_at": li_at, "JSESSIONID": jsessionid or make_jsessionid(li_at)}
         _save_cached_session(cookies)
         return cookies
 
 
 def get_session_cookies() -> dict[str, str]:
     if settings.li_at:
-        return {"li_at": settings.li_at, "JSESSIONID": _make_jsessionid(settings.li_at)}
+        return {"li_at": settings.li_at, "JSESSIONID": make_jsessionid(settings.li_at)}
 
     cached = _load_cached_session()
     if cached:

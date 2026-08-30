@@ -176,6 +176,20 @@ standard `HTTPS_PROXY` environment variable, which `httpx` honors
 automatically) is the usual mitigation — this repo doesn't set one up for
 you, but no code changes are needed to add one.
 
+## Browser UI
+
+`GET /` serves a single-page form (`app/static/index.html`): paste a LinkedIn
+session cookie and a profile URL or bare handle (e.g. `satyanadella`), and it
+renders the parsed profile in the browser, with a "Raw JSON" toggle. It's a
+thin client over `POST /v1/profile` below — no separate backend.
+
+The cookie you paste there is used only in memory to build a one-off request
+to LinkedIn and is never written to disk, logged, or cached; only the parsed
+profile output is cached (see `POST /v1/profile`). That said, an `li_at`
+cookie grants full access to whatever LinkedIn account it belongs to, exactly
+like a password — the page says as much, and the same caution applies if you
+point other people at this UI.
+
 ## API documentation
 
 ### `GET /health`
@@ -266,6 +280,25 @@ profile comes back as `null` (or an empty list for sections), not omitted.
 | 502 | LinkedIn returned something else unexpected |
 
 Every error response is `{"detail": "<human-readable message>"}`.
+
+### `POST /v1/profile`
+
+Same result shape as `GET /v1/profile`, but authenticates with a session
+cookie supplied in the request body instead of the server's configured one —
+this is what the browser UI (`/`) calls. Useful for letting someone else use
+this API with their own LinkedIn session rather than yours.
+
+**Request**
+
+```json
+{ "url": "https://www.linkedin.com/in/some-person/", "li_at": "<their li_at cookie>" }
+```
+
+`url` also accepts a bare handle (`"some-person"`) instead of a full URL —
+`GET /v1/profile` accepts the same. `li_at` is required; a missing or invalid
+value returns `400` / `401` respectively. The cookie is used to build a
+one-off client for this single request only — it is not cached, logged, or
+reused for later requests.
 
 Full interactive documentation (OpenAPI/Swagger) is served at `/docs` on
 any running instance.

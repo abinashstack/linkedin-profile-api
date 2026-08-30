@@ -47,6 +47,11 @@ class ProfileImage(BaseModel):
     height: Optional[int] = None
 
 
+class ProfileRequest(BaseModel):
+    url: str  # a full profile URL or a bare handle, e.g. "satyanadella"
+    li_at: Optional[str] = None  # per-request session cookie override; used only in-memory
+
+
 class ProfileResponse(BaseModel):
     public_id: str
     profile_url: str

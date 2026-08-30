@@ -21,6 +21,19 @@ def test_extract_public_id_valid():
     assert extract_public_id("https://linkedin.com/in/jane-doe") == "jane-doe"
 
 
+def test_extract_public_id_bare_handle():
+    assert extract_public_id("jane-doe") == "jane-doe"
+    assert extract_public_id("  jane-doe  ") == "jane-doe"
+    assert extract_public_id("@jane-doe") == "jane-doe"
+
+
+def test_extract_public_id_rejects_malformed_handle():
+    with pytest.raises(InvalidProfileURLError):
+        extract_public_id("jane doe")
+    with pytest.raises(InvalidProfileURLError):
+        extract_public_id("")
+
+
 def test_extract_public_id_rejects_non_linkedin():
     with pytest.raises(InvalidProfileURLError):
         extract_public_id("https://example.com/in/jane-doe")
