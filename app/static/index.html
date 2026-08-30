@@ -26,12 +26,15 @@
   }
   form { display: flex; flex-direction: column; gap: 0.75rem; }
   label { font-size: 0.85rem; font-weight: 600; }
-  input {
+  .hint { font-size: 0.8rem; color: #777; margin: -0.5rem 0 0; }
+  input, textarea {
     padding: 0.5rem 0.6rem;
     font-size: 1rem;
+    font-family: inherit;
     border: 1px solid #ccc;
     border-radius: 6px;
   }
+  textarea { resize: vertical; }
   button {
     padding: 0.6rem 1rem;
     font-size: 1rem;
@@ -46,6 +49,16 @@
   #status { margin-top: 1rem; font-size: 0.9rem; }
   #status.error { color: #b00020; }
   #result { margin-top: 1.5rem; }
+  .result-block { padding-bottom: 1.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid #e5e5e5; }
+  .result-block:last-child { border-bottom: none; }
+  .error-block {
+    border-left: 3px solid #b00020;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .error-block .title { font-weight: 600; }
+  .error-block .msg { color: #b00020; }
   .card { display: flex; gap: 1rem; align-items: flex-start; margin-bottom: 1rem; }
   .card img { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; background: #eee; }
   .card h2 { margin: 0; font-size: 1.2rem; }
@@ -76,16 +89,18 @@
   <div class="warning">
     By default this uses the LinkedIn session already configured on the
     server. If you paste a cookie below instead, it's sent directly to this
-    server over HTTPS for that one lookup and then discarded — never written
-    to a file, logged, or cached. Even so, an <code>li_at</code> cookie
-    grants full access to whatever LinkedIn account it belongs to, exactly
-    like a password — only paste one you're comfortable sharing with this
-    server.
+    server over HTTPS for this lookup and then discarded — never written to
+    a file, logged, or cached. Even so, an <code>li_at</code> cookie grants
+    full access to whatever LinkedIn account it belongs to, exactly like a
+    password — only paste one you're comfortable sharing with this server.
   </div>
 
   <form id="lookup-form">
-    <label for="target">Profile URL or username</label>
-    <input id="target" type="text" placeholder="https://www.linkedin.com/in/satyanadella/  or just  satyanadella" required autocomplete="off" />
+    <label for="targets">Profile URLs or usernames (one per line)</label>
+    <textarea id="targets" rows="5" required autocomplete="off" placeholder="https://www.linkedin.com/in/satyanadella/
+jeffweiner08
+some-other-handle"></textarea>
+    <p class="hint">Looked up one at a time with a short delay between each, not all at once. A large batch may be rejected — split it into smaller requests if so.</p>
 
     <label for="li_at">Session cookie override (optional)</label>
     <input id="li_at" type="password" placeholder="Leave blank to use this server's own session" autocomplete="off" />
@@ -113,7 +128,7 @@
       return `${esc(a || "?")} – ${esc(b || "Present")}`;
     }
 
-    function render(p) {
+    function renderProfileCard(p) {
       let html = `<div class="card">`;
       if (p.profile_picture && p.profile_picture.url) {
         html += `<img src="${esc(p.profile_picture.url)}" alt="" />`;
@@ -178,24 +193,54 @@
       }
 
       html += `<details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(p, null, 2))}</pre></details>`;
+      return html;
+    }
+
+    function renderErrorBlock(url, error) {
+      return `<div class="error-block">
+        <div class="title">${esc(url)}</div>
+        <div class="msg">${esc(error)}</div>
+      </div>`;
+    }
+
+    function renderResults(results) {
+      let html = "";
+      for (const r of results) {
+        if (r.ok) {
+          html += `<div class="result-block">${renderProfileCard(r.profile)}</div>`;
+        } else {
+          html += renderErrorBlock(r.url, r.error);
+        }
+      }
       resultEl.innerHTML = html;
     }
 
     form.addEventListener("submit", async (ev) => {
       ev.preventDefault();
       statusEl.className = "";
-      statusEl.textContent = "Looking up…";
       resultEl.innerHTML = "";
       submitBtn.disabled = true;
 
       const li_at = document.getElementById("li_at").value.trim();
-      const target = document.getElementById("target").value.trim();
+      const urls = document.getElementById("targets").value
+        .split("\n")
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      if (urls.length === 0) {
+        statusEl.className = "error";
+        statusEl.textContent = "Enter at least one profile URL or username.";
+        submitBtn.disabled = false;
+        return;
+      }
+
+      statusEl.textContent = urls.length === 1 ? "Looking up…" : `Looking up ${urls.length} profiles…`;
 
       try {
-        const res = await fetch("/v1/profile", {
+        const res = await fetch("/v1/profiles/batch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: target, li_at }),
+          body: JSON.stringify({ urls, li_at }),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -203,8 +248,11 @@
           statusEl.textContent = data.detail || `Request failed (HTTP ${res.status})`;
           return;
         }
-        statusEl.textContent = "";
-        render(data);
+        const okCount = data.results.filter(r => r.ok).length;
+        statusEl.textContent = data.results.length === 1
+          ? ""
+          : `${okCount} of ${data.results.length} succeeded.`;
+        renderResults(data.results);
       } catch (err) {
         statusEl.className = "error";
         statusEl.textContent = "Network error: " + err.message;

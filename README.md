@@ -178,10 +178,11 @@ you, but no code changes are needed to add one.
 
 ## Browser UI
 
-`GET /` serves a single-page form (`app/static/index.html`): enter a profile
-URL or bare handle (e.g. `satyanadella`) and it renders the parsed profile in
-the browser, with a "Raw JSON" toggle. It's a thin client over
-`POST /v1/profile` below — no separate backend.
+`GET /` serves a single-page form (`app/static/index.html`): enter one or
+more profile URLs/bare handles (e.g. `satyanadella`), one per line, and it
+renders each parsed profile in the browser, with a "Raw JSON" toggle per
+profile. It's a thin client over `POST /v1/profiles/batch` below (a single
+line is just a batch of one) — no separate backend.
 
 By default it looks up profiles using the session already configured on the
 server (`LINKEDIN_LI_AT`) — that's the point of setting that up: paste your
